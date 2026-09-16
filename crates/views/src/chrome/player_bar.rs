@@ -232,7 +232,7 @@ impl PlayerBar {
         Button::new("toggle-fullscreen")
             .ghost()
             .small()
-            .icon("icons/maximize.svg")
+            .icon("icons/chevron-up.svg")
             .tooltip_above("player-fullscreen")
             .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleFullscreen), cx))
     }
@@ -424,7 +424,7 @@ impl Render for PlayerBar {
             .into_any_element();
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(self.settings.read(cx));
+        let radius = crate::chrome::window_radius(window, self.settings.read(cx));
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<Pixels> = None;
 

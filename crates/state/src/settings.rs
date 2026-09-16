@@ -498,7 +498,9 @@ impl Default for Appearance {
             transparency: ui::BACKDROP_TRANSPARENCY,
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             server_side_decorations: true,
-            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+            #[cfg(target_os = "windows")]
+            window_rounding: Rounding::Rounded.id().to_owned(),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             window_rounding: Rounding::Square.id().to_owned(),
             window_controls: true,
             #[cfg(not(target_os = "macos"))]
