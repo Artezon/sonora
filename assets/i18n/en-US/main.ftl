@@ -521,6 +521,7 @@ settings-font-detail = Base text size, everything else scales with it
 settings-font-value = { $size } px
 settings-startup = Show on startup
 settings-startup-detail = The screen Sonora opens on launch
+settings-startup-no-guest = Unavailable in Guest mode
 settings-entries = Sidebar entries
 settings-entries-detail = The sections listed in the sidebar
 settings-entries-pick = Choose entries
