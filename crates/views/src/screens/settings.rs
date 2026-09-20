@@ -1532,7 +1532,7 @@ impl SettingsView {
                 match adaptive
                     && !matches!(kind, ThemeKind::System | ThemeKind::Dark | ThemeKind::Light)
                 {
-                    true => item.disabled(),
+                    true => item.disabled().tooltip("settings-theme-unavailable"),
                     false => {
                         let overrides = overrides.clone();
                         item.on_click(cx.listener(move |this, _, _, cx| {
