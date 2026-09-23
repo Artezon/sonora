@@ -54,7 +54,16 @@ const PLAYABLE_EXTENSIONS: &[&str] = &[
 static ARTIST_SEPARATORS: LazyLock<AhoCorasick> = LazyLock::new(|| {
     AhoCorasick::builder()
         .ascii_case_insensitive(true)
-        .build(&[",", ";", " ft. ", " feat ", " feat. ", " featuring "])
+        .build([
+            ",",
+            ";",
+            "&",
+            " ft. ",
+            " feat ",
+            " feat. ",
+            " featuring ",
+            " with ",
+        ])
         .expect("artist separators are valid patterns")
 });
 
