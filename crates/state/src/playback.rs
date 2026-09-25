@@ -541,7 +541,7 @@ impl Playback {
     /// Loads a track to play from `at`, after the debounce `start` asks for. The state reads
     /// Loading from here until the engine reports audio; a refusal or an unplayable track fails
     /// without reaching the engine.
-    fn load_from(&mut self, track: &Track, at: Duration, start: Start, cx: &mut Context<Self>) {   
+    fn load_from(&mut self, track: &Track, at: Duration, start: Start, cx: &mut Context<Self>) {
         let Some(id) = track.id.clone() else {
             return self.failed(format!("{} has no track id", track.name), cx);
         };
