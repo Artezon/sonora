@@ -15,6 +15,16 @@ struct Want {
     display: bool,
 }
 
+/// Why the Linux portal holds no inhibitor after a request.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+enum NotHeld {
+    /// The backend refused the flags, as a GNOME portal without gnome-session does for anything
+    /// but idle. Asking again for the same `Want` gets the same answer.
+    Refused,
+    /// The portal could not be reached or the call failed, which may pass.
+    Failed,
+}
+
 /// Keeps the system awake while music plays, and the display on while it plays in the focused
 /// fullscreen view. Linux asks the desktop portal from tokio, so the lock lands a moment later.
 pub struct Wake {
@@ -191,8 +201,8 @@ fn hold_one(held: &mut Option<objc2_io_kit::IOPMAssertionID>, on: bool, kind: &s
 }
 
 /// Holds the portal inhibitor that matches the latest `Want` until the sender drops. The new
-/// inhibitor is taken before the old one is released, and a failed request is retried every
-/// `RETRY` while the old one stays held.
+/// inhibitor is taken before the old one is released. A failed request is retried every `RETRY`
+/// while the old one stays held, and a refused one waits for the next `Want`.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 async fn inhibit(mut receiver: watch::Receiver<Want>) {
     let mut proxy = None;
@@ -202,8 +212,9 @@ async fn inhibit(mut receiver: watch::Receiver<Want>) {
         let mut failed = false;
         match want.system || want.display {
             true => match acquire(&mut proxy, want).await {
-                Some(request) => release(held.replace(request)).await,
-                None => failed = true,
+                Ok(request) => release(held.replace(request)).await,
+                Err(NotHeld::Refused) => {}
+                Err(NotHeld::Failed) => failed = true,
             },
             false => release(held.take()).await,
         }
@@ -222,12 +233,13 @@ async fn inhibit(mut receiver: watch::Receiver<Want>) {
 }
 
 /// Asks the portal for an inhibitor matching `want`, reaching the portal first if `proxy` is
-/// empty. A failed request clears `proxy` so the next attempt reconnects.
+/// empty. A failed call clears `proxy` so the next attempt reconnects. The portal reports a
+/// refusal in the response signal rather than as a call error, so the response is checked too.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 async fn acquire(
     proxy: &mut Option<ashpd::desktop::inhibit::InhibitProxy>,
     want: Want,
-) -> Option<ashpd::desktop::Request<()>> {
+) -> Result<ashpd::desktop::Request<()>, NotHeld> {
     use ashpd::desktop::inhibit::{InhibitFlags, InhibitOptions, InhibitProxy};
     use ashpd::enumflags2::BitFlag;
 
@@ -236,10 +248,13 @@ async fn acquire(
             Ok(reached) => *proxy = Some(reached),
             Err(error) => {
                 log::warn!("wake: cannot reach the inhibit portal: {error}");
-                return None;
+                return Err(NotHeld::Failed);
             }
         }
     }
+    let Some(reached) = proxy.as_ref() else {
+        return Err(NotHeld::Failed);
+    };
     let mut flags = InhibitFlags::empty();
     if want.system {
         flags.insert(InhibitFlags::Suspend);
@@ -249,13 +264,19 @@ async fn acquire(
     }
     let reason = i18n::t!("wake-reason");
     let options = InhibitOptions::default().set_reason(reason.as_ref());
-    let result = proxy.as_ref()?.inhibit(None, flags, options).await;
-    match result {
-        Ok(request) => Some(request),
+    let request = match reached.inhibit(None, flags, options).await {
+        Ok(request) => request,
         Err(error) => {
             log::warn!("wake: cannot inhibit: {error}");
             *proxy = None;
-            None
+            return Err(NotHeld::Failed);
+        }
+    };
+    match request.response() {
+        Ok(()) => Ok(request),
+        Err(error) => {
+            log::warn!("wake: the portal refused to inhibit {flags:?}: {error}");
+            Err(NotHeld::Refused)
         }
     }
 }
