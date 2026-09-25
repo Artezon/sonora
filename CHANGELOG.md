@@ -27,6 +27,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Navidrome and other Subsonic servers now see what you play. The server's now-playing list
   shows where you are in the track and whether it's paused, and play counts and recently played
   update once you've listened long enough to scrobble.
+- Discord shows a cover for local files, Subsonic servers and any other track whose own art
+  Discord cannot load, found on Deezer by artist and album. Turn off Artwork for local files in
+  Privacy settings to keep your local files' tags on your computer.
 
 ### Changed
 
@@ -54,6 +57,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of leaving `01.` on the front.
 - An LRC line that ends with its own timestamp, such as `[00:12.00]lyric[00:15.00]`, keeps the
   words and drops the closing stamp from the text.
+- Discord shows the cover art of YouTube Music tracks that have no album, such as music videos
+  and radio picks.
 
 ## [0.39.0] - 2026-09-24
 

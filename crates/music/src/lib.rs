@@ -1,4 +1,5 @@
 pub mod apple;
+pub mod artwork;
 mod audio;
 pub mod binimum;
 pub mod credentials;

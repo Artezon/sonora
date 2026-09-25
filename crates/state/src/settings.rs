@@ -281,6 +281,7 @@ struct Values {
     discord_without_details: bool,
     discord_sonora_button: bool,
     discord_provider_button: bool,
+    artwork_for_local_files: bool,
     lyrics_for_local_files: bool,
     prefer_local_lyrics: bool,
     /// Set once Local has been added to a list saved before it existed, so a user who turns it
@@ -367,6 +368,7 @@ impl Default for Values {
             discord_without_details: false,
             discord_sonora_button: true,
             discord_provider_button: true,
+            artwork_for_local_files: true,
             lyrics_for_local_files: true,
             prefer_local_lyrics: false,
             local_lyrics_offered: false,
@@ -698,6 +700,12 @@ impl AppSettings {
     /// Whether the Discord status carries a button that opens the track on its provider.
     pub fn discord_provider_button(&self) -> bool {
         self.values.discord_provider_button
+    }
+
+    /// Whether a local file's artist and album may be sent to a public catalogue to find a cover
+    /// for its Discord status. Streamed tracks are looked up regardless.
+    pub fn artwork_for_local_files(&self) -> bool {
+        self.values.artwork_for_local_files
     }
 
     pub fn lyrics_for_local_files(&self) -> bool {
@@ -1065,6 +1073,11 @@ impl AppSettings {
 
     pub fn set_discord_provider_button(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.discord_provider_button = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_artwork_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.artwork_for_local_files = enabled;
         self.schedule_save(cx);
     }
 
