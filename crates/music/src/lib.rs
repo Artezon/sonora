@@ -1,4 +1,5 @@
 pub mod apple;
+pub mod artwork;
 mod audio;
 pub mod binimum;
 pub mod credentials;
@@ -31,17 +32,17 @@ pub mod youtube;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use async_trait::async_trait;
 
 pub use equalizer::Equalizer;
 pub use models::{
-    Album, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef, Contributor, Credit,
-    Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Lyrics, LyricsHit, LyricsLane,
-    LyricsLine, LyricsQuery, LyricsWord, PinOutcome, PinTarget, PinTargetKind, Playlist,
-    PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
+    Contributor, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Lyrics, LyricsHit,
+    LyricsLane, LyricsLine, LyricsQuery, LyricsWord, PinOutcome, PinTarget, PinTargetKind,
+    Playlist, PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
     UserDetail, UserProfile, Voice, WritingSystem,
 };
 pub use spectrum::Spectrum;
@@ -50,6 +51,10 @@ pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";
 pub const LOCAL_ARTIST_PREFIX: &str = "local-artist:";
 pub const LOCAL_PLAYLIST_PREFIX: &str = "local-playlist:";
+
+/// The most recommendations a provider hands one list of an album or artist page, so a
+/// rail never asks for or draws more than this many releases or artists.
+pub const SUGGESTIONS: usize = 10;
 
 pub fn is_local_id(id: &str) -> bool {
     id.starts_with(LOCAL_TRACK_PREFIX)
@@ -78,6 +83,14 @@ pub enum MediaKind {
     Album,
     Artist,
     Playlist,
+}
+
+/// What `MusicApi::report` tells the provider's server about the current track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Report {
+    Playing,
+    Paused,
+    Stopped,
 }
 
 #[async_trait]
@@ -153,6 +166,20 @@ pub trait MusicApi: Send + Sync {
         anyhow::bail!("this provider does not support file deletion")
     }
     async fn track_playcount(&self, track_id: &str) -> Result<Option<u64>>;
+
+    /// Tells the provider's own server whether a track is playing and where it is. It is sent on
+    /// every start, pause, seek and stop, and never counts as a listen. A provider that keeps no
+    /// listening record keeps the default and makes no request.
+    async fn report(&self, _track_id: &str, _report: Report, _position: Duration) -> Result<()> {
+        Ok(())
+    }
+
+    /// Records a finished listen that started at `at` on the provider's own server. It is sent
+    /// at the same moment and under the same rules as a scrobble. A provider that keeps no
+    /// listening record keeps the default and makes no request.
+    async fn played(&self, _track_id: &str, _at: SystemTime) -> Result<()> {
+        Ok(())
+    }
     async fn playlists(&self) -> Result<Vec<Playlist>>;
     /// Changes the provider's own pin for `uri`, one of the uris `pin_targets` lists or
     /// `pin_uri` builds.
@@ -221,6 +248,20 @@ pub trait MusicApi: Send + Sync {
     async fn set_artist_saved(&self, artist_id: &str, saved: bool) -> Result<()>;
     async fn album(&self, album_id: &str) -> Result<AlbumDetail>;
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>>;
+
+    /// The rest of an album page, fetched once `album` has put the tracks up: the releases
+    /// the provider lists as related, with more from the same artist first and similar
+    /// artists' releases topping the rail up. `artist_id` is
+    /// the page's artist when the album names one the app can follow. A provider whose
+    /// `album` already answers with everything leaves the default, which is nothing more
+    /// to fetch.
+    async fn album_catalogue(
+        &self,
+        _album_id: &str,
+        _artist_id: Option<&str>,
+    ) -> Result<AlbumCatalogue> {
+        Ok(AlbumCatalogue::default())
+    }
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail>;
     async fn playlist_continuation(
         &self,
@@ -483,7 +524,7 @@ impl std::fmt::Display for SignInFailure {
             SignInProblem::Premium => "the account has no Spotify Premium",
             SignInProblem::Region => "the account is out of its home region",
             SignInProblem::Credentials => "the stored credentials are no longer valid",
-            SignInProblem::Network => "Spotify could not be reached",
+            SignInProblem::Network => "the provider could not be reached",
             SignInProblem::Cancelled => "authorization was cancelled in the browser",
             SignInProblem::Refused => "Spotify refused the session",
         };

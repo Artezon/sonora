@@ -144,8 +144,6 @@ menu-copy = Copiar
 menu-paste = Pegar
 menu-select-all = Seleccionar todo
 menu-remove-from-queue = Quitar de la cola
-menu-open-playlist = Abrir lista de reproducción
-menu-play-playlist = Reproducir lista
 menu-rename-playlist = Renombrar lista
 menu-delete-playlist = Eliminar lista
 menu-add-playlist-to-library = Añadir a la biblioteca
@@ -162,8 +160,6 @@ menu-library-remove-tracks = { $count ->
 }
 menu-make-playlist-public = Hacer pública
 menu-make-playlist-private = Hacer privada
-menu-open-album = Abrir álbum
-menu-play-album = Reproducir álbum
 menu-play-artist = Reproducir artista
 
 # playlist editor
@@ -269,7 +265,7 @@ login-signed-in = Sesión iniciada como { $name }
 login-failed-title = No se pudo iniciar sesión
 login-problem-region = Spotify no abre una sesión desde el país en el que estás. Inicia sesión desde tu país de origen o cambia el país en tu cuenta de Spotify.
 login-problem-credentials = Tu sesión guardada de Spotify ya no es válida. Inicia sesión de nuevo para continuar.
-login-problem-network = Sonora no pudo conectarse con Spotify. Revisa tu conexión a internet e inténtalo de nuevo.
+login-problem-network = Sonora no pudo conectarse con el servicio de música. Revisa tu conexión a internet e inténtalo de nuevo.
 login-problem-cancelled = Cerraste la página del navegador antes de aprobar el inicio de sesión. Empieza de nuevo para terminar.
 login-problem-refused = Spotify rechazó el inicio de sesión. Espera un momento e inténtalo de nuevo.
 login-problem-premium = Sonora reproduce a través de Spotify Premium y esta cuenta no lo tiene. Inicia sesión con una cuenta Premium para continuar.
@@ -527,8 +523,10 @@ settings-window-rounding = Esquinas de la ventana
 settings-window-rounding-detail = El grado de redondeo de las esquinas de la ventana
 settings-controls-side = Lado de los controles
 settings-controls-side-detail = El extremo de la barra de título donde se sitúan los controles
-settings-close-to-tray = Reproducir mientras esta en segundo plano
-settings-close-to-tray-detail = Mantiene a Sonora en segundo plano y continúa reproduciendo después de cerrar su ventana
+settings-close-to-tray = Mantener en segundo plano
+settings-close-to-tray-detail = Mantiene a Sonora en ejecución y reproduciendo después de cerrar su ventana
+settings-tray-icon = Mostrar en la bandeja del sistema
+settings-tray-icon-detail = Pone un icono con controles de reproducción en la bandeja del sistema
 settings-discord = Mostrar en Discord
 settings-discord-detail = Muestra la pista que estás escuchando en tu perfil de Discord
 settings-discord-name = Nombre del estado
@@ -816,6 +814,7 @@ tags-isrc = ISRC
 tags-comment = Comentario
 toast-tags-saved = Se guardaron las etiquetas de { $name }
 toast-tags-failed = No se pudieron guardar las etiquetas
+toast-tray-unavailable = No hay ninguna bandeja del sistema donde poner el icono
 
 nav-pin = Fijar
 toast-library-pin-failed = No se pudo actualizar el elemento fijado en Spotify.

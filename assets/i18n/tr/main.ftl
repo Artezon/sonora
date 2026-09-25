@@ -121,16 +121,12 @@ menu-copy = Kopyala
 menu-paste = Yapıştır
 menu-select-all = Tümünü seç
 menu-remove-from-queue = Sıradan çıkar
-menu-open-playlist = Çalma listesini aç
-menu-play-playlist = Çalma listesini çal
 menu-rename-playlist = Çalma listesini yeniden adlandır
 menu-delete-playlist = Çalma listesini sil
 menu-add-playlist-to-library = Kitaplığa ekle
 menu-remove-playlist-from-library = Kitaplıktan çıkar
 menu-make-playlist-public = Herkese açık yap
 menu-make-playlist-private = Gizli yap
-menu-open-album = Albümü aç
-menu-play-album = Albümü çal
 menu-play-artist = Sanatçıyı çal
 
 # playlist editor
@@ -240,7 +236,7 @@ login-signed-in = { $name } olarak oturum açıldı
 login-failed-title = Oturum açılamadı
 login-problem-region = Spotify, bulunduğun ülkeden oturum açılmasına izin vermiyor. Kendi ülkenden oturum aç ya da Spotify hesabındaki ülkeyi değiştir.
 login-problem-credentials = Kayıtlı Spotify oturumun artık geçerli değil. Sürdürmek için yeniden oturum aç.
-login-problem-network = Sonora, Spotify'a ulaşamadı. İnternet bağlantını denetleyip yeniden dene.
+login-problem-network = Sonora, müzik hizmetine ulaşamadı. İnternet bağlantını denetleyip yeniden dene.
 login-problem-cancelled = Oturum açmayı onaylamadan tarayıcı sayfasını kapattın. Bitirmek için yeniden başla.
 login-problem-refused = Spotify oturum açma isteğini geri çevirdi. Biraz bekleyip yeniden dene.
 login-problem-premium = Sonora, Spotify Premium üzerinden yayın yapar ve bu hesapta Premium yok. Sürdürmek için Premium bir hesapla oturum aç.

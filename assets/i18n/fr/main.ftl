@@ -142,16 +142,12 @@ menu-copy = Copier
 menu-paste = Coller
 menu-select-all = Tout sélectionner
 menu-remove-from-queue = Retirer de la file d'attente
-menu-open-playlist = Ouvrir la playlist
-menu-play-playlist = Lire la playlist
 menu-rename-playlist = Renommer la playlist
 menu-delete-playlist = Supprimer la playlist
 menu-add-playlist-to-library = Ajouter à la bibliothèque
 menu-remove-playlist-from-library = Retirer de la bibliothèque
 menu-make-playlist-public = Rendre publique
 menu-make-playlist-private = Rendre privée
-menu-open-album = Ouvrir l'album
-menu-play-album = Lire l'album
 menu-play-artist = Lire l'artiste
 
 # playlist editor
@@ -255,7 +251,7 @@ login-signed-in = Connecté en tant que { $name }
 login-failed-title = Échec de la connexion
 login-problem-region = Spotify n'ouvre pas de session depuis le pays où vous êtes. Connectez-vous depuis votre pays d'origine, ou changez le pays de votre compte Spotify.
 login-problem-credentials = Votre session Spotify enregistrée n'est plus valide. Reconnectez-vous pour continuer.
-login-problem-network = Sonora n'a pas pu joindre Spotify. Vérifiez votre connexion internet et réessayez.
+login-problem-network = Sonora n'a pas pu joindre le service de musique. Vérifiez votre connexion internet et réessayez.
 login-problem-cancelled = Vous avez fermé la page du navigateur avant d'approuver la connexion. Recommencez pour aller au bout.
 login-problem-refused = Spotify a refusé la connexion. Patientez un instant et réessayez.
 login-problem-premium = Sonora diffuse via Spotify Premium, et ce compte ne l'a pas. Connectez-vous avec un compte Premium pour continuer.

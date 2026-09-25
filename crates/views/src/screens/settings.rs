@@ -126,6 +126,7 @@ enum Slot {
     Entries,
     Language,
     Tray,
+    TrayIcon,
     Accounts,
     LocalFolder,
     Theme,
@@ -133,6 +134,7 @@ enum Slot {
     Ambient,
     AmbientMotion,
     Visualizer,
+    VisualizerAbsolute,
     Icons,
     Opacity,
     WindowBlur,
@@ -161,6 +163,7 @@ enum Slot {
     Normalisation,
     Gapless,
     Sleep,
+    StayAwake,
     Widevine,
     Equalizer,
     EqualizerPreset,
@@ -170,6 +173,7 @@ enum Slot {
     Karaoke,
     Romanized,
     LyricsForLocal,
+    ArtworkForLocal,
     Discord,
     DiscordName,
     DiscordShowPaused,
@@ -544,6 +548,7 @@ impl SettingsView {
                 Slot::Language,
                 Slot::Title("settings-group-window"),
                 Slot::Tray,
+                Slot::TrayIcon,
                 Slot::Title("settings-group-accounts"),
                 Slot::Accounts,
                 Slot::Title("settings-group-library"),
@@ -570,8 +575,15 @@ impl SettingsView {
                     .ambient()
                     .then_some(Slot::AmbientMotion),
             )
+            .chain([Slot::Visualizer])
+            .chain(
+                self.settings
+                    .read(cx)
+                    .visualizer_style()
+                    .shown()
+                    .then_some(Slot::VisualizerAbsolute),
+            )
             .chain([
-                Slot::Visualizer,
                 Slot::FullscreenControlsAutohide,
                 Slot::Title("settings-group-lyrics"),
                 Slot::PanelLyricsSize,
@@ -594,6 +606,7 @@ impl SettingsView {
                     Slot::Normalisation,
                     Slot::Gapless,
                     Slot::Sleep,
+                    Slot::StayAwake,
                 ];
                 if self.drm.read(cx).shown(cx) {
                     slots.push(Slot::Widevine);
@@ -615,7 +628,12 @@ impl SettingsView {
                 slots
             }
             SettingsTab::Privacy => {
-                vec![Slot::Title("settings-group-lyrics"), Slot::LyricsForLocal]
+                vec![
+                    Slot::Title("settings-group-lyrics"),
+                    Slot::LyricsForLocal,
+                    Slot::Title("settings-group-discord"),
+                    Slot::ArtworkForLocal,
+                ]
             }
             SettingsTab::Integrations => self
                 .discord_slots(cx)
@@ -651,6 +669,7 @@ impl SettingsView {
                 t!("settings-close-to-tray"),
                 t!("settings-close-to-tray-detail"),
             ),
+            Slot::TrayIcon => (t!("settings-tray-icon"), t!("settings-tray-icon-detail")),
             Slot::Accounts => {
                 let detail = t!("settings-accounts-detail");
                 let names = self.account_words(cx);
@@ -671,6 +690,10 @@ impl SettingsView {
                 t!("settings-ambient-motion-detail"),
             ),
             Slot::Visualizer => (t!("settings-visualizer"), t!("settings-visualizer-detail")),
+            Slot::VisualizerAbsolute => (
+                t!("settings-visualizer-absolute"),
+                t!("settings-visualizer-absolute-detail"),
+            ),
             Slot::Icons => (t!("settings-icons"), t!("settings-icons-detail")),
             Slot::Opacity => (t!("settings-opacity"), t!("settings-opacity-detail")),
             Slot::WindowBlur => (
@@ -735,6 +758,7 @@ impl SettingsView {
             ),
             Slot::Gapless => (t!("settings-gapless"), t!("settings-gapless-detail")),
             Slot::Sleep => (t!("settings-sleep"), t!("settings-sleep-detail")),
+            Slot::StayAwake => (t!("settings-stay-awake"), t!("settings-stay-awake-detail")),
             Slot::Widevine => {
                 let (detail, _) = widevine_copy(self.drm.read(cx).state());
                 (t!("settings-widevine"), i18n::lookup(detail, None))
@@ -777,6 +801,10 @@ impl SettingsView {
             Slot::DiscordBadge => (
                 t!("settings-discord-badge"),
                 t!("settings-discord-badge-detail"),
+            ),
+            Slot::ArtworkForLocal => (
+                t!("settings-artwork-for-local-files"),
+                t!("settings-artwork-for-local-files-detail"),
             ),
             Slot::DiscordAnonymous => (
                 t!("settings-discord-anonymous"),
@@ -903,6 +931,7 @@ impl SettingsView {
             Slot::Entries => self.entries_row(cx).element,
             Slot::Language => self.language_row(cx).element,
             Slot::Tray => self.tray_row(cx).element,
+            Slot::TrayIcon => self.tray_icon_row(cx).element,
             Slot::Accounts => self.accounts_row(cx).element,
             Slot::LocalFolder => self.local_folder_row(cx).element,
             Slot::Theme => self.theme_row(cx).element,
@@ -910,6 +939,7 @@ impl SettingsView {
             Slot::Ambient => self.ambient_row(cx).element,
             Slot::AmbientMotion => self.ambient_motion_row(cx).element,
             Slot::Visualizer => self.visualizer_style_row(cx).element,
+            Slot::VisualizerAbsolute => self.visualizer_absolute_row(cx).element,
             Slot::Icons => self.icons_row(cx).element,
             Slot::Opacity => self.opacity_row(cx).element,
             Slot::WindowBlur => self.blur_window_row(cx).element,
@@ -938,6 +968,7 @@ impl SettingsView {
             Slot::Normalisation => self.playback_row(cx).element,
             Slot::Gapless => self.gapless_row(cx).element,
             Slot::Sleep => self.sleep_row(cx).element,
+            Slot::StayAwake => self.stay_awake_row(cx).element,
             Slot::Widevine => self.widevine_row(cx).element,
             Slot::Equalizer => self.equalizer_row(cx).element,
             Slot::EqualizerPreset => self.equalizer_preset_row(cx).element,
@@ -951,6 +982,7 @@ impl SettingsView {
             Slot::DiscordName => self.discord_name_row(cx).element,
             Slot::DiscordShowPaused => self.discord_show_paused_row(cx).element,
             Slot::DiscordBadge => self.discord_badge_row(cx).element,
+            Slot::ArtworkForLocal => self.artwork_for_local_files_row(cx).element,
             Slot::DiscordAnonymous => self.discord_anonymous_row(cx).element,
             Slot::DiscordButtons => self.discord_buttons_row(cx).element,
             Slot::Scrobble(index) => match index < self.scrobbling.read(cx).rows().len() {
@@ -1858,6 +1890,26 @@ impl SettingsView {
         )
     }
 
+    fn visualizer_absolute_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).visualizer_absolute();
+
+        self.row(
+            t!("settings-visualizer-absolute"),
+            t!("settings-visualizer-absolute-detail"),
+            muted,
+            small,
+            Switch::new("visualizer-absolute", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_visualizer_absolute(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn fullscreen_controls_autohide_row(&self, cx: &mut Context<Self>) -> Setting {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
@@ -2032,6 +2084,26 @@ impl SettingsView {
         )
     }
 
+    fn tray_icon_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).tray_icon();
+
+        self.row(
+            t!("settings-tray-icon"),
+            t!("settings-tray-icon-detail"),
+            muted,
+            small,
+            Switch::new("tray-icon", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_tray_icon(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn gapless_row(&self, cx: &mut Context<Self>) -> Setting {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
@@ -2047,6 +2119,26 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.playback
                         .update(cx, |playback, cx| playback.set_gapless(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn stay_awake_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).stay_awake();
+
+        self.row(
+            t!("settings-stay-awake"),
+            t!("settings-stay-awake-detail"),
+            muted,
+            small,
+            Switch::new("stay-awake", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_stay_awake(!on, cx));
                 }))
                 .into_any_element(),
         )
@@ -2580,6 +2672,27 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_discord_badge(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn artwork_for_local_files_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).artwork_for_local_files();
+
+        self.row(
+            t!("settings-artwork-for-local-files"),
+            t!("settings-artwork-for-local-files-detail"),
+            muted,
+            small,
+            Switch::new("artwork-for-local-files", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_artwork_for_local_files(!on, cx)
+                    });
                 }))
                 .into_any_element(),
         )

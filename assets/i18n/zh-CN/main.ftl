@@ -142,16 +142,12 @@ menu-copy = 复制
 menu-paste = 粘贴
 menu-select-all = 全选
 menu-remove-from-queue = 从播放队列中移除
-menu-open-playlist = 打开播放列表
-menu-play-playlist = 播放该列表
 menu-rename-playlist = 重命名播放列表
 menu-delete-playlist = 删除播放列表
 menu-add-playlist-to-library = 添加到音乐库
 menu-remove-playlist-from-library = 从音乐库中移除
 menu-make-playlist-public = 设为公开
 menu-make-playlist-private = 设为私密
-menu-open-album = 打开专辑
-menu-play-album = 播放专辑
 menu-play-artist = 播放歌手
 
 # playlist editor
@@ -255,7 +251,7 @@ login-signed-in = 已登录为 { $name }
 login-failed-title = 登录失败
 login-problem-region = Spotify 不会从你所在的国家/地区开启会话。请从你的所在国家/地区登录，或更改 Spotify 账户上的国家/地区。
 login-problem-credentials = 你保存的 Spotify 会话已失效。请重新登录以继续。
-login-problem-network = Sonora 无法连接到 Spotify。请检查网络连接并重试。
+login-problem-network = Sonora 无法连接到音乐服务。请检查网络连接并重试。
 login-problem-cancelled = 你在批准登录之前关闭了浏览器页面。请重新开始以完成登录。
 login-problem-refused = Spotify 拒绝了登录请求。请稍等片刻后重试。
 login-problem-premium = Sonora 通过 Spotify Premium 串流，而此账户没有 Premium。请使用 Premium 账户登录以继续。

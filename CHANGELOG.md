@@ -7,6 +7,63 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-09-25
+
+### Added
+
+- The visualizer can ignore Sonora's volume. Turn on Ignore volume under Fullscreen in
+  Appearance settings and the bars stay full height when you turn the music down.
+- Album pages now carry recommendations wherever the provider offers them: related
+  releases and similar artists under Albums and Artists tabs, and Apple Music artists
+  list what they appear on.
+- Album pages print the release's copyright line or record label under the tracks, on
+  Apple Music, Spotify, Deezer and OpenSubsonic servers that list one.
+- Album and playlist pages hold placeholder rows while their tracks load, as many as the
+  release has when Sonora already knows the count, so the page no longer jumps when they arrive.
+- An album's menu has Add to playlist, which puts the whole album into a playlist and skips
+  the tracks it already holds.
+- On Linux the desktop media widget shows Sonora's icon and has shuffle and repeat buttons that
+  stay in step with the player bar.
+- Sonora keeps the computer awake while music plays and if the fullscreen view is active, keeps
+  the screen on as well. This can be disabled in settings.
+- Navidrome and other Subsonic servers now see what you play. The server's now-playing list
+  shows where you are in the track and whether it's paused, and play counts and recently played
+  update once you've listened long enough to scrobble.
+- Discord shows a cover for local files, Subsonic servers and any other track whose own art
+  Discord cannot load, found on Deezer by artist and album. Turn off Artwork for local files in
+  Privacy settings to keep your local files' tags on your computer.
+
+### Changed
+
+- Album and playlist menus no longer list Open and Play, which clicking the card already does,
+  so they read like a song's menu.
+- Every album, playlist, artist and track card opens its right-click menu, including the
+  album page's recommendations and an artist's Appears on row.
+- Album, playlist, library and history pages give their total length as 46m 15s, or 1h 2m past
+  an hour, rather than a clock reading like 46:15.
+
+### Fixed
+
+- Local albums whose files have no album artist tag no longer split into one album per
+  featured artist. Tracks in the same folder with the same album name now make one album.
+- Loud tracks no longer flatten the top of the visualizer wave.
+- Secondary text and table headers in the Dark and Light themes are easier to read, and now
+  meet the WCAG AA contrast minimum, with or without the adaptive theme.
+- On Linux, playerctl and the desktop media widget read Sonora's real volume instead of always
+  seeing 100%.
+- A YouTube Music sign-in no longer runs out after about 40 minutes. Likes and playlist edits keep
+  working, and Sonora stays signed in across restarts.
+- An LRC `[offset:]` tag is applied to every line, so a sheet that starts a few hundred
+  milliseconds late or early stays in time.
+- An untagged song named like `01. Title - Artist` keeps the title without the track number,
+  instead of leaving `01.` on the front.
+- An LRC line that ends with its own timestamp, such as `[00:12.00]lyric[00:15.00]`, keeps the
+  words and drops the closing stamp from the text.
+- Discord shows the cover art of YouTube Music tracks that have no album, such as music videos
+  and radio picks.
+- Local files keep playing after Spotify refuses the account's audio keys or a provider asks you
+  to sign in again.
+
 ## [0.39.0] - 2026-09-24
 
 ### Added
@@ -27,6 +84,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   including Quick picks, recently added albums, local playlists, and artists.
 
 ### Changed
+
+- Keep playing when closed is now called Keep running in the background. A new Show in the system
+  tray switch next to it hides the tray icon, or the menu bar item on macOS, whether or not Sonora
+  keeps running after its window closes. Settings > General > Window
 
 - An artist page opens as soon as their profile and popular tracks arrive, and fills its
   releases in behind that, so an artist with a thousand of them no longer leaves the page
@@ -1801,7 +1862,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.39.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/sonorahq/sonora/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/sonorahq/sonora/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/sonorahq/sonora/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/sonorahq/sonora/compare/v0.36.0...v0.37.0

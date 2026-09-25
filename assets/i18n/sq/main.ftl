@@ -152,8 +152,6 @@ menu-copy = Kopjo
 menu-paste = Ngjit
 menu-select-all = Përzgjidh të gjitha
 menu-remove-from-queue = Hiq nga radha
-menu-open-playlist = Hap listën e luajtjes
-menu-play-playlist = Luaj listën e luajtjes
 menu-rename-playlist = Riemërto listën e luajtjes
 menu-delete-playlist = Fshi listën e luajtjes
 menu-add-playlist-to-library = Shto te Biblioteka
@@ -170,8 +168,6 @@ menu-library-remove-tracks = { $count ->
 }
 menu-make-playlist-public = Bëje publike
 menu-make-playlist-private = Bëje private
-menu-open-album = Hap albumin
-menu-play-album = Luaj albumin
 menu-play-artist = Luaj artistin
 
 # playlist editor
@@ -278,7 +274,7 @@ login-signed-in = I lidhur si { $name }
 login-failed-title = Hyrja dështoi
 login-problem-region = Spotify nuk hap një seancë nga vendi ku ndodhesh. Hyr nga vendi yt i origjinës, ose ndrysho vendin në llogarinë Spotify.
 login-problem-credentials = Seanca e ruajtur e Spotify nuk është më e vlefshme. Hyr përsëri për të vazhduar.
-login-problem-network = Sonora nuk mund të lidhej me Spotify. Kontrollo lidhjen e internetit dhe provo përsëri.
+login-problem-network = Sonora nuk mund të lidhej me shërbimin muzikor. Kontrollo lidhjen e internetit dhe provo përsëri.
 login-problem-cancelled = Mbyllët faqen e shfletuesit para se të miratoje hyrjen. Filloni përsëri për të përfunduar.
 login-problem-refused = Spotify refuzoi hyrjen. Prit pak dhe provo përsëri.
 login-problem-premium = Sonora transmeton përmes Spotify Premium, dhe kjo llogari nuk e ka. Hyr me një llogari Premium për të vazhduar.

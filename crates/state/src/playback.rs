@@ -213,10 +213,13 @@ pub enum PlaybackState {
 }
 
 /// What other entities hear from `Playback`: history records a start, the sheet closes on an
-/// end.
+/// end, and scrobbling tells the provider about every pause and seek.
 pub enum PlaybackEvent {
     StartedPlayback,
     EndedPlayback,
+    Paused,
+    /// The engine landed a seek, playing or paused.
+    Seeked,
 }
 
 /// A one-shot request to pause after wall-clock time or when the current track ends.
@@ -510,8 +513,12 @@ impl Playback {
         self.engine_for(id)
     }
 
-    pub fn spectrum(&self) -> Option<Spectrum> {
-        self.active_engine()?.spectrum()
+    /// The playing engine's spectrum, set to hear the track before or after the volume as the
+    /// visualizer setting asks.
+    pub fn spectrum(&self, cx: &App) -> Option<Spectrum> {
+        let spectrum = self.active_engine()?.spectrum()?;
+        spectrum.set_absolute(self.settings.read(cx).visualizer_absolute());
+        Some(spectrum)
     }
 
     /// Pauses the engine the new track does not belong to, so the two never sound at once.
@@ -563,18 +570,21 @@ impl Playback {
     /// Loading from here until the engine reports audio; a refusal or an unplayable track fails
     /// without reaching the engine.
     fn load_from(&mut self, track: &Track, at: Duration, start: Start, cx: &mut Context<Self>) {
-        match self.refused {
-            Some(Refusal::Keys) => return self.refuse(cx),
-            Some(Refusal::SignIn) => return self.gate(cx),
-            None => {}
-        }
         let Some(id) = track.id.clone() else {
             return self.failed(format!("{} has no track id", track.name), cx);
         };
+        let is_local = music::is_local_id(&id);
+        if !is_local {
+            match self.refused {
+                Some(Refusal::Keys) => return self.refuse(cx),
+                Some(Refusal::SignIn) => return self.gate(cx),
+                None => {}
+            }
+        }
         if !track.playable {
             return self.failed(format!("{} is not available to stream", track.name), cx);
         }
-        if !music::is_local_id(&id) && Network::lost(cx) {
+        if !is_local && Network::lost(cx) {
             return self.unreachable(start, cx);
         }
         if self.engine_for(&id).is_none() {
@@ -1384,29 +1394,34 @@ impl Playback {
         self.repeat
     }
 
-    pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
-        self.repeat = match self.repeat {
-            Repeat::Off => Repeat::All,
-            Repeat::All => Repeat::One,
-            Repeat::One => Repeat::Off,
-        };
-        let repeat = self.repeat;
+    /// Switches the repeat mode and remembers it in settings.
+    pub fn set_repeat(&mut self, repeat: Repeat, cx: &mut Context<Self>) {
+        if self.repeat == repeat {
+            return;
+        }
+        self.repeat = repeat;
         self.settings
             .update(cx, |settings, cx| settings.set_repeat(repeat, cx));
         cx.notify();
     }
 
+    pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
+        let repeat = match self.repeat {
+            Repeat::Off => Repeat::All,
+            Repeat::All => Repeat::One,
+            Repeat::One => Repeat::Off,
+        };
+        self.set_repeat(repeat, cx);
+    }
+
     /// A binary on/off flip for surfaces (tray, dock menu) that do not fit the three-way
     /// cycle the player bar's button drives; `One` counts as on and flips straight to `Off`.
     pub fn toggle_repeat(&mut self, cx: &mut Context<Self>) {
-        self.repeat = match self.repeat {
+        let repeat = match self.repeat {
             Repeat::Off => Repeat::All,
             Repeat::All | Repeat::One => Repeat::Off,
         };
-        let repeat = self.repeat;
-        self.settings
-            .update(cx, |settings, cx| settings.set_repeat(repeat, cx));
-        cx.notify();
+        self.set_repeat(repeat, cx);
     }
 
     /// Decides what follows a track that ended: the same one on repeat-one, the queue's start
@@ -2160,6 +2175,7 @@ impl Playback {
                 self.position = at;
                 self.clock.reset(at, false);
                 self.remember(true, cx);
+                cx.emit(PlaybackEvent::Paused);
                 self.follow_up_seek(cx);
             }
             BackendEvent::Seeked { at, .. } => {
@@ -2167,6 +2183,7 @@ impl Playback {
                 self.position = at;
                 self.clock.reset(at, self.state == PlaybackState::Playing);
                 self.remember(true, cx);
+                cx.emit(PlaybackEvent::Seeked);
                 self.follow_up_seek(cx);
             }
             BackendEvent::Position { at, .. } => {

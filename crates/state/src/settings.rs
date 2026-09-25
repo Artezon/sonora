@@ -281,6 +281,7 @@ struct Values {
     discord_without_details: bool,
     discord_sonora_button: bool,
     discord_provider_button: bool,
+    artwork_for_local_files: bool,
     lyrics_for_local_files: bool,
     prefer_local_lyrics: bool,
     /// Set once Local has been added to a list saved before it existed, so a user who turns it
@@ -296,6 +297,8 @@ struct Values {
     adaptive_menu: bool,
     check_updates: bool,
     close_to_tray: bool,
+    tray_icon: bool,
+    stay_awake: bool,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -320,6 +323,8 @@ struct Appearance {
     ambient_motion: bool,
     visualizer: bool,
     visualizer_style: String,
+    /// Whether the visualizer draws the track at its own level rather than at the volume.
+    visualizer_absolute: bool,
     icons: String,
     rounding: String,
     /// Whether the app paints its frosted treatments. The key kept its old name, which stood
@@ -363,6 +368,7 @@ impl Default for Values {
             discord_without_details: false,
             discord_sonora_button: true,
             discord_provider_button: true,
+            artwork_for_local_files: true,
             lyrics_for_local_files: true,
             prefer_local_lyrics: false,
             local_lyrics_offered: false,
@@ -385,6 +391,8 @@ impl Default for Values {
             adaptive_menu: false,
             check_updates: cfg!(target_os = "windows"),
             close_to_tray: true,
+            tray_icon: true,
+            stay_awake: true,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
@@ -514,6 +522,7 @@ impl Default for Appearance {
             ambient_motion: true,
             visualizer: true,
             visualizer_style: ui::VisualizerStyle::default().id().to_owned(),
+            visualizer_absolute: false,
             icons: icons::BASE.to_owned(),
             rounding: Rounding::Rounded.id().to_owned(),
             blur: true,
@@ -693,6 +702,12 @@ impl AppSettings {
         self.values.discord_provider_button
     }
 
+    /// Whether a local file's artist and album may be sent to a public catalogue to find a cover
+    /// for its Discord status. Streamed tracks are looked up regardless.
+    pub fn artwork_for_local_files(&self) -> bool {
+        self.values.artwork_for_local_files
+    }
+
     pub fn lyrics_for_local_files(&self) -> bool {
         self.values.lyrics_for_local_files
     }
@@ -750,6 +765,15 @@ impl AppSettings {
 
     pub fn close_to_tray(&self) -> bool {
         self.values.close_to_tray
+    }
+
+    pub fn tray_icon(&self) -> bool {
+        self.values.tray_icon
+    }
+
+    /// Whether music keeps the system awake and, in fullscreen, the display.
+    pub fn stay_awake(&self) -> bool {
+        self.values.stay_awake
     }
 
     /// Every linked scrobbling account, keyed by its service slug.
@@ -851,6 +875,11 @@ impl AppSettings {
             true => ui::VisualizerStyle::from_id(&self.values.appearance.visualizer_style),
             false => ui::VisualizerStyle::None,
         }
+    }
+
+    /// Whether the visualizer ignores Sonora's volume and draws the track at its own level.
+    pub fn visualizer_absolute(&self) -> bool {
+        self.values.appearance.visualizer_absolute
     }
 
     pub fn fullscreen_controls_autohide(&self) -> FullscreenControlsAutohide {
@@ -1047,6 +1076,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_artwork_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.artwork_for_local_files = enabled;
+        self.schedule_save(cx);
+    }
+
     pub fn set_lyrics_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.lyrics_for_local_files = enabled;
         self.schedule_save(cx);
@@ -1116,6 +1150,16 @@ impl AppSettings {
 
     pub fn set_close_to_tray(&mut self, close_to_tray: bool, cx: &mut Context<Self>) {
         self.values.close_to_tray = close_to_tray;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_tray_icon(&mut self, tray_icon: bool, cx: &mut Context<Self>) {
+        self.values.tray_icon = tray_icon;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_stay_awake(&mut self, stay_awake: bool, cx: &mut Context<Self>) {
+        self.values.stay_awake = stay_awake;
         self.schedule_save(cx);
     }
 
@@ -1451,6 +1495,11 @@ impl AppSettings {
         if style.shown() {
             self.values.appearance.visualizer_style = style.id().to_owned();
         }
+        self.schedule_save(cx);
+    }
+
+    pub fn set_visualizer_absolute(&mut self, absolute: bool, cx: &mut Context<Self>) {
+        self.values.appearance.visualizer_absolute = absolute;
         self.schedule_save(cx);
     }
 

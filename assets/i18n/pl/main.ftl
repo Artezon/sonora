@@ -160,8 +160,6 @@ menu-copy = Kopiuj
 menu-paste = Wklej
 menu-select-all = Zaznacz wszystko
 menu-remove-from-queue = Usuń z kolejki
-menu-open-playlist = Otwórz playlistę
-menu-play-playlist = Odtwórz playlistę
 menu-rename-playlist = Zmień nazwę playlisty
 menu-delete-playlist = Usuń playlistę
 menu-add-playlist-to-library = Dodaj do biblioteki
@@ -180,8 +178,6 @@ menu-library-remove-tracks = { $count ->
 }
 menu-make-playlist-public = Ustaw jako publiczną
 menu-make-playlist-private = Ustaw jako prywatną
-menu-open-album = Otwórz album
-menu-play-album = Odtwórz album
 menu-play-artist = Odtwórz wykonawcę
 
 # playlist editor
@@ -292,7 +288,7 @@ login-signed-in = Zalogowano jako { $name }
 login-failed-title = Logowanie nie powiodło się
 login-problem-region = Spotify nie otworzy sesji z kraju, w którym jesteś. Zaloguj się z kraju macierzystego albo zmień kraj na koncie Spotify.
 login-problem-credentials = Zapisana sesja Spotify straciła ważność. Zaloguj się ponownie.
-login-problem-network = Sonora nie mogła połączyć się ze Spotify. Sprawdź połączenie internetowe i spróbuj ponownie.
+login-problem-network = Sonora nie mogła połączyć się z serwisem muzycznym. Sprawdź połączenie internetowe i spróbuj ponownie.
 login-problem-cancelled = Zamknięto stronę przeglądarki przed zatwierdzeniem logowania. Zacznij od nowa.
 login-problem-refused = Spotify odrzucił logowanie. Odczekaj chwilę i spróbuj ponownie.
 login-problem-premium = Sonora odtwarza muzykę przez Spotify Premium, a to konto go nie ma. Zaloguj się na konto z Premium, aby kontynuować.
@@ -366,6 +362,10 @@ artist-filter-all = Wszystkie
 artist-filter-albums = Albumy
 artist-filter-singles = Single
 artist-filter-eps = EP
+artist-appears-on = Występuje w
+album-also-like = Może Ci się spodobać
+album-tab-albums = Albumy
+album-tab-artists = Artyści
 
 # user profile page
 user-eyebrow = Profil

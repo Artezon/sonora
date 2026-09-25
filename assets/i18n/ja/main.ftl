@@ -121,16 +121,12 @@ menu-copy = コピー
 menu-paste = 貼り付け
 menu-select-all = すべて選択
 menu-remove-from-queue = 再生キューから削除
-menu-open-playlist = プレイリストを開く
-menu-play-playlist = プレイリストを再生
 menu-rename-playlist = プレイリストの名前を変更
 menu-delete-playlist = プレイリストを削除
 menu-add-playlist-to-library = ライブラリに追加
 menu-remove-playlist-from-library = ライブラリから削除
 menu-make-playlist-public = 公開する
 menu-make-playlist-private = 非公開にする
-menu-open-album = アルバムを開く
-menu-play-album = アルバムを再生
 menu-play-artist = アーティストを再生
 
 # playlist editor
@@ -218,7 +214,7 @@ login-signed-in = { $name } としてサインイン中
 login-failed-title = サインインに失敗しました
 login-problem-region = 現在いる国からは Spotify のセッションを開始できません。居住国からサインインするか、Spotify アカウントの国設定を変更してください。
 login-problem-credentials = 保存された Spotify のセッションは無効になっています。続けるにはもう一度サインインしてください。
-login-problem-network = Spotify に接続できませんでした。インターネット接続を確認してもう一度お試しください。
+login-problem-network = 音楽サービスに接続できませんでした。インターネット接続を確認してもう一度お試しください。
 login-problem-cancelled = サインインを承認する前にブラウザのページが閉じられました。最初からやり直してください。
 login-problem-refused = Spotify がサインインを拒否しました。しばらく待ってからもう一度お試しください。
 login-problem-premium = Sonora は Spotify Premium でストリーミングしますが、このアカウントは Premium プランに加入していません。続けるには Premium アカウントでサインインしてください。
