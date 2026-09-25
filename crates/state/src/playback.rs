@@ -570,18 +570,21 @@ impl Playback {
     /// Loading from here until the engine reports audio; a refusal or an unplayable track fails
     /// without reaching the engine.
     fn load_from(&mut self, track: &Track, at: Duration, start: Start, cx: &mut Context<Self>) {
-        match self.refused {
-            Some(Refusal::Keys) => return self.refuse(cx),
-            Some(Refusal::SignIn) => return self.gate(cx),
-            None => {}
-        }
         let Some(id) = track.id.clone() else {
             return self.failed(format!("{} has no track id", track.name), cx);
         };
+        let is_local = music::is_local_id(&id);
+        if !is_local {
+            match self.refused {
+                Some(Refusal::Keys) => return self.refuse(cx),
+                Some(Refusal::SignIn) => return self.gate(cx),
+                None => {}
+            }
+        }
         if !track.playable {
             return self.failed(format!("{} is not available to stream", track.name), cx);
         }
-        if !music::is_local_id(&id) && Network::lost(cx) {
+        if !is_local && Network::lost(cx) {
             return self.unreachable(start, cx);
         }
         if self.engine_for(&id).is_none() {
