@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-09-25
+
 ### Added
 
 - The visualizer can ignore Sonora's volume. Turn on Ignore volume under Fullscreen in
@@ -59,6 +61,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   words and drops the closing stamp from the text.
 - Discord shows the cover art of YouTube Music tracks that have no album, such as music videos
   and radio picks.
+- Local files keep playing after Spotify refuses the account's audio keys or a provider asks you
+  to sign in again.
 
 ## [0.39.0] - 2026-09-24
 
@@ -1858,7 +1862,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.39.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/sonorahq/sonora/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/sonorahq/sonora/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/sonorahq/sonora/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/sonorahq/sonora/compare/v0.36.0...v0.37.0
