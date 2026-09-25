@@ -173,6 +173,7 @@ enum Slot {
     Karaoke,
     Romanized,
     LyricsForLocal,
+    ArtworkForLocal,
     Discord,
     DiscordName,
     DiscordShowPaused,
@@ -627,7 +628,12 @@ impl SettingsView {
                 slots
             }
             SettingsTab::Privacy => {
-                vec![Slot::Title("settings-group-lyrics"), Slot::LyricsForLocal]
+                vec![
+                    Slot::Title("settings-group-lyrics"),
+                    Slot::LyricsForLocal,
+                    Slot::Title("settings-group-discord"),
+                    Slot::ArtworkForLocal,
+                ]
             }
             SettingsTab::Integrations => self
                 .discord_slots(cx)
@@ -795,6 +801,10 @@ impl SettingsView {
             Slot::DiscordBadge => (
                 t!("settings-discord-badge"),
                 t!("settings-discord-badge-detail"),
+            ),
+            Slot::ArtworkForLocal => (
+                t!("settings-artwork-for-local-files"),
+                t!("settings-artwork-for-local-files-detail"),
             ),
             Slot::DiscordAnonymous => (
                 t!("settings-discord-anonymous"),
@@ -972,6 +982,7 @@ impl SettingsView {
             Slot::DiscordName => self.discord_name_row(cx).element,
             Slot::DiscordShowPaused => self.discord_show_paused_row(cx).element,
             Slot::DiscordBadge => self.discord_badge_row(cx).element,
+            Slot::ArtworkForLocal => self.artwork_for_local_files_row(cx).element,
             Slot::DiscordAnonymous => self.discord_anonymous_row(cx).element,
             Slot::DiscordButtons => self.discord_buttons_row(cx).element,
             Slot::Scrobble(index) => match index < self.scrobbling.read(cx).rows().len() {
@@ -2661,6 +2672,27 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_discord_badge(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn artwork_for_local_files_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).artwork_for_local_files();
+
+        self.row(
+            t!("settings-artwork-for-local-files"),
+            t!("settings-artwork-for-local-files-detail"),
+            muted,
+            small,
+            Switch::new("artwork-for-local-files", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_artwork_for_local_files(!on, cx)
+                    });
                 }))
                 .into_any_element(),
         )
