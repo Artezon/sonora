@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::{Album, SavedArtist, Track};
+use crate::{Album, ArtistRef, SavedArtist, Track};
 
 use super::wire;
 
@@ -32,7 +32,7 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path) -> Scanned {
         }
     }
 
-    let parsed: Vec<(Track, String)> = files
+    let parsed: Vec<(Track, Vec<ArtistRef>)> = files
         .into_iter()
         .filter_map(|path| {
             let artist_hint = path.parent().and_then(Path::parent).map(folder_name);
@@ -58,7 +58,7 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path) -> Scanned {
     scanned
 }
 
-fn group_albums(parsed: &[(Track, String)]) -> Vec<Album> {
+fn group_albums(parsed: &[(Track, Vec<ArtistRef>)]) -> Vec<Album> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
 
@@ -79,16 +79,21 @@ fn group_albums(parsed: &[(Track, String)]) -> Vec<Album> {
             let mut tracks: Vec<Track> = indices.iter().map(|&i| parsed[i].0.clone()).collect();
             tracks.sort_by_key(|track| (track.disc_number, track.track_number, track.name.clone()));
 
-            let album_artist = parsed[indices[0]].1.clone();
+            let album_artist_refs = &parsed[indices[0]].1;
             let name = tracks[0].album.clone();
             let year = album_year(indices, parsed);
 
-            Some(wire::album_from_tracks(&name, &album_artist, &tracks, year))
+            Some(wire::album_from_tracks(
+                &name,
+                album_artist_refs,
+                &tracks,
+                year,
+            ))
         })
         .collect()
 }
 
-fn album_year(indices: &[usize], parsed: &[(Track, String)]) -> i32 {
+fn album_year(indices: &[usize], parsed: &[(Track, Vec<ArtistRef>)]) -> i32 {
     indices
         .iter()
         .find_map(|&i| {
@@ -112,7 +117,7 @@ fn album_year(indices: &[usize], parsed: &[(Track, String)]) -> i32 {
 }
 
 fn group_artists(
-    parsed: &[(Track, String)],
+    parsed: &[(Track, Vec<ArtistRef>)],
     portraits: &HashMap<String, String>,
     albums: &[Album],
 ) -> Vec<SavedArtist> {
@@ -166,7 +171,10 @@ fn group_artists(
         .collect()
 }
 
-fn collect_portraits(roots: &[PathBuf], parsed: &[(Track, String)]) -> HashMap<String, String> {
+fn collect_portraits(
+    roots: &[PathBuf],
+    parsed: &[(Track, Vec<ArtistRef>)],
+) -> HashMap<String, String> {
     let mut known: HashSet<String> = HashSet::new();
     for (track, _) in parsed {
         for artist_ref in &track.artist_refs {
