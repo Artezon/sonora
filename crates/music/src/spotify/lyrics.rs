@@ -1,11 +1,107 @@
+use std::time::SystemTime;
+
 use anyhow::{Context as _, Result};
+use async_trait::async_trait;
 use bytes::Bytes;
 use http::{Method, Request, header};
 use librespot_core::{Session, spclient::CLIENT_TOKEN};
 use serde::Deserialize;
+use tokio::sync::Mutex;
 
-use crate::lyrics::lrc;
-use crate::{Lyrics, LyricsLine, LyricsWord, Voice};
+use super::{auth, search};
+use crate::lyrics::{catalog, lrc};
+use crate::{
+    Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice, escape,
+};
+
+const SOURCE: &str = "Spotify";
+
+/// A lyrics-only connection, independent of the selected playback provider.
+pub struct SpotifyLyrics {
+    config: auth::AuthConfig,
+    connection: Mutex<Option<Connection>>,
+}
+
+struct Connection {
+    modified: SystemTime,
+    session: Session,
+}
+
+impl SpotifyLyrics {
+    pub fn new(config: auth::AuthConfig) -> Self {
+        Self {
+            config,
+            connection: Mutex::new(None),
+        }
+    }
+
+    pub fn from_env() -> Self {
+        Self::new(auth::AuthConfig::from_env())
+    }
+
+    async fn session(&self) -> Result<Option<Session>> {
+        let mut held = self.connection.lock().await;
+        let file = self.config.file();
+        let modified = match std::fs::metadata(&file).and_then(|metadata| metadata.modified()) {
+            Ok(modified) => modified,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                *held = None;
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if let Some(connection) = held.as_ref()
+            && connection.modified == modified
+            && !connection.session.is_invalid()
+        {
+            return Ok(Some(connection.session.clone()));
+        }
+        *held = None;
+        let Some(session) = auth::restore(&self.config).await? else {
+            return Ok(None);
+        };
+        // Restore can refresh the credential file itself.
+        let modified = std::fs::metadata(file)?.modified()?;
+        *held = Some(Connection {
+            modified,
+            session: session.clone(),
+        });
+        Ok(Some(session))
+    }
+}
+
+#[async_trait]
+impl LyricsProvider for SpotifyLyrics {
+    fn name(&self) -> &'static str {
+        SOURCE
+    }
+
+    async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>> {
+        let Some(session) = self.session().await? else {
+            return Ok(Vec::new());
+        };
+        if let Some(id) = query.id_for("spotify") {
+            return Ok(lyrics(&session, id)
+                .await?
+                .filter(|sheet| !sheet.is_empty())
+                .map(|sheet| catalog::hit(SOURCE, query, sheet))
+                .into_iter()
+                .collect());
+        }
+        let tracks = search::search(&session, &format!("{} {}", query.title, query.artist)).await?;
+        let mut hits = Vec::new();
+        for (id, mut hit) in catalog::candidates(SOURCE, query, tracks) {
+            if let Some(sheet) = lyrics(&session, &id)
+                .await?
+                .filter(|sheet| !sheet.is_empty())
+            {
+                hit.lyrics = sheet;
+                hits.push(hit);
+            }
+        }
+        Ok(hits)
+    }
+}
 
 const ENDPOINT: &str = "https://spclient.wg.spotify.com/color-lyrics/v2/track";
 const APP_PLATFORM: &str = "WebPlayer";
@@ -59,7 +155,8 @@ pub async fn lyrics(session: &Session, track_id: &str) -> Result<Option<Lyrics>>
     let request = Request::builder()
         .method(Method::GET)
         .uri(format!(
-            "{ENDPOINT}/{track_id}?format=json&vocalRemoval=false&market=from_token"
+            "{ENDPOINT}/{}?format=json&vocalRemoval=false&market=from_token",
+            escape::component(track_id)
         ))
         .header(header::ACCEPT, "application/json")
         .header("app-platform", APP_PLATFORM)

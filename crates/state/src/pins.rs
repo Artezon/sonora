@@ -1,7 +1,10 @@
-use std::collections::HashSet;
+use std::cell::OnceCell;
+use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::rc::Rc;
 
 use gpui::{App, Context, Entity};
-use music::{LibraryItem, LibraryItemKind};
+use music::{PinTarget, PinTargetKind};
 use ui::{Pin, PinKind};
 
 use crate::library::{Library, Shelf};
@@ -48,8 +51,17 @@ pub struct Pins {
     settings: Entity<AppSettings>,
     library: Entity<Library>,
     session: Entity<Session>,
-    /// The uris the provider last reported as pinned, so only a change since then is followed.
-    mirrored: HashSet<String>,
+    /// What the provider last reported as pinned, by uri, so only a change since then is
+    /// followed.
+    mirrored: HashMap<String, Pin>,
+    /// `entries` as last laid out. Cleared whenever the settings, the session or the library
+    /// move, so a frame reads the list without rebuilding it.
+    laid: OnceCell<Rc<Vec<Pin>>>,
+    /// `library` as last laid out, cleared alongside `laid`.
+    rest: OnceCell<Rc<Vec<Pin>>>,
+    /// The digest of what the shelves last listed, so a library notify that changed nothing
+    /// the sidebar shows does not rebuild it.
+    seen: u64,
 }
 
 impl Pins {
@@ -59,30 +71,89 @@ impl Pins {
         session: Entity<Session>,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&library, |this, _, cx| this.absorb(cx)).detach();
-        cx.observe(&settings, |_, _, cx| cx.notify()).detach();
-        cx.observe(&session, |_, _, cx| cx.notify()).detach();
+        cx.observe(&library, |this, _, cx| {
+            this.absorb(cx);
+            let seen = this.fingerprint(cx);
+            if this.seen != seen {
+                this.seen = seen;
+                this.changed(cx);
+            }
+        })
+        .detach();
+        cx.observe(&settings, |this, _, cx| this.changed(cx))
+            .detach();
+        cx.observe(&session, |this, _, cx| this.changed(cx))
+            .detach();
 
         Self {
             settings,
             library,
             session,
-            mirrored: HashSet::new(),
+            mirrored: HashMap::new(),
+            laid: OnceCell::new(),
+            rest: OnceCell::new(),
+            seen: 0,
         }
     }
 
-    /// Every pin of the live providers, laid out the way the user asked for.
-    pub fn entries(&self, cx: &App) -> Vec<Pin> {
-        let slugs = self.session.read(cx).active_slugs();
-        let mut pinned = self.settings.read(cx).pinned(&slugs);
-        self.lay_out(&mut pinned, cx);
-        pinned
+    /// Every pin of the live providers, laid out the way the user asked for. The list is built
+    /// once per change and shared afterwards.
+    pub fn entries(&self, cx: &App) -> Rc<Vec<Pin>> {
+        self.laid
+            .get_or_init(|| {
+                let slugs = self.session.read(cx).active_slugs();
+                let mut pinned = self.settings.read(cx).pinned(&slugs);
+                self.lay_out(&mut pinned, cx);
+                Rc::new(pinned)
+            })
+            .clone()
     }
 
     /// Everything the live shelves hold that is not pinned: albums, artists and playlists, laid
     /// out the same way the pins above them are. Nothing else a provider lists belongs here,
-    /// since the sidebar can only open these three.
-    pub fn library(&self, cx: &App) -> Vec<Pin> {
+    /// since the sidebar can only open these three. Built once per change, like `entries`.
+    pub fn library(&self, cx: &App) -> Rc<Vec<Pin>> {
+        self.rest
+            .get_or_init(|| Rc::new(self.gather_library(cx)))
+            .clone()
+    }
+
+    /// A digest of the albums, artists and playlists the live shelves list, with the names
+    /// and covers the sidebar shows for them.
+    fn fingerprint(&self, cx: &App) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        let library = self.library.read(cx);
+        for shelf in [Shelf::Streaming, Shelf::Local] {
+            if self.session.read(cx).client_of(shelf).is_none() {
+                continue;
+            }
+            let held = library.state(shelf);
+            for playlist in held.playlists() {
+                (&playlist.id, &playlist.name, &playlist.cover).hash(&mut hasher);
+            }
+            for album in held.albums() {
+                (&album.id, &album.name, &album.cover_large, &album.cover).hash(&mut hasher);
+            }
+            for artist in held.artists() {
+                (&artist.id, &artist.name, &artist.cover).hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    /// Drops both laid-out lists so the next read rebuilds them.
+    fn forget(&mut self) {
+        self.laid.take();
+        self.rest.take();
+    }
+
+    /// Forgets the laid-out lists and tells the observers.
+    fn changed(&mut self, cx: &mut Context<Self>) {
+        self.forget();
+        cx.notify();
+    }
+
+    fn gather_library(&self, cx: &App) -> Vec<Pin> {
         let pinned = self.dragged(cx);
         let library = self.library.read(cx);
         let mut rest = Vec::new();
@@ -157,7 +228,7 @@ impl Pins {
         self.settings.update(cx, |settings, cx| {
             settings.set_sidebar_pin_sort(sort, reversed, cx)
         });
-        cx.notify();
+        self.changed(cx);
     }
 
     pub fn holds(&self, pin: &Pin, cx: &App) -> bool {
@@ -190,7 +261,7 @@ impl Pins {
         if !known {
             self.tell(&pin, true, cx);
         }
-        cx.notify();
+        self.changed(cx);
     }
 
     pub fn unpin(&mut self, pin: Pin, cx: &mut Context<Self>) {
@@ -200,7 +271,7 @@ impl Pins {
         self.settings
             .update(cx, |settings, cx| settings.unpin(slug, &pin, cx));
         self.tell(&pin, false, cx);
-        cx.notify();
+        self.changed(cx);
     }
 
     /// Mirrors a change into the provider's own pins. Nothing happens for a provider that keeps
@@ -212,7 +283,7 @@ impl Pins {
         let mine = cx.entity();
         let pin = pin.clone();
         self.library.update(cx, |library, cx| {
-            library.set_sidebar_pinned(
+            library.set_pinned(
                 uri,
                 pinned,
                 move |kept, cx| {
@@ -238,6 +309,7 @@ impl Pins {
             settings.rearrange(&shown, &slugs, cx);
             settings.set_sidebar_pin_sort(None, false, cx);
         });
+        self.forget();
     }
 
     /// Puts the local list back after the provider refused the change.
@@ -250,62 +322,70 @@ impl Pins {
             true => settings.unpin(slug, &pin, cx),
             false => settings.pin(slug, pin, None, &slugs, cx),
         });
-        cx.notify();
+        self.changed(cx);
     }
 
-    /// The provider's own uri for a pin, when the provider lists it and keeps pins itself.
+    /// The provider's own uri for a pin, when the provider keeps pins itself. A listed item
+    /// keeps the uri it was listed with, and the provider builds one for anything else. A
+    /// provider that keeps no pins, as YouTube does, answers `None`, so the pin stays a local
+    /// one rather than failing on a call it cannot make.
     fn remote(&self, pin: &Pin, cx: &App) -> Option<String> {
-        self.library
+        let session = self.session.read(cx);
+        if !session.capabilities().pins || music::is_local_id(&pin.id) {
+            return None;
+        }
+        let listed = self
+            .library
             .read(cx)
-            .sidebar_items()?
+            .pin_targets()?
             .iter()
             .find(|item| pin_of(item).is_some_and(|listed| listed.same(pin)))
-            .map(|item| item.uri.clone())
+            .map(|item| item.uri.clone());
+        listed.or_else(|| {
+            session
+                .client_of(Shelf::Streaming)?
+                .pin_uri(target_kind(pin.kind)?, &pin.id)
+        })
     }
 
     /// Follows the provider's own pins: one it pinned elsewhere joins the local list, one it
     /// dropped elsewhere leaves it. Only a change since the last look counts, so a local pin the
     /// provider never held stays put, and the first look after signing in imports what is there.
+    /// A dropped pin is found in `mirrored`, since a provider may stop listing it altogether.
     fn absorb(&mut self, cx: &mut Context<Self>) {
-        if self.library.read(cx).sidebar_pin_pending() {
+        if self.library.read(cx).pin_pending() {
             return;
         }
-        let Some(items) = self
-            .library
-            .read(cx)
-            .sidebar_items()
-            .map(<[LibraryItem]>::to_vec)
-        else {
+        let Some(items) = self.library.read(cx).pin_targets() else {
             self.mirrored.clear();
             return;
         };
-        let now: HashSet<String> = items
+        let now: Vec<(String, Pin)> = items
             .iter()
             .filter(|item| item.pinned)
-            .map(|item| item.uri.clone())
+            .filter_map(|item| Some((item.uri.clone(), pin_of(item)?)))
             .collect();
-        if now == self.mirrored {
+        if now.len() == self.mirrored.len()
+            && now.iter().all(|(uri, _)| self.mirrored.contains_key(uri))
+        {
             return;
         }
-        let slugs = self.session.read(cx).active_slugs();
+        let session = self.session.read(cx);
+        let slugs = session.active_slugs();
         let held = self.settings.read(cx).pinned(&slugs);
-        let mut arrived = Vec::new();
-        let mut left = Vec::new();
-        for item in &items {
-            let Some(pin) = pin_of(item) else {
-                continue;
-            };
-            let Some(slug) = self.session.read(cx).slug_for(&item.uri) else {
-                continue;
-            };
-            let known = held.iter().any(|known| known.same(&pin));
-            match (now.contains(&item.uri), self.mirrored.contains(&item.uri)) {
-                (true, false) if !known => arrived.push((slug, pin)),
-                (false, true) if known => left.push((slug, pin)),
-                _ => {}
-            }
-        }
-        self.mirrored = now;
+        let known = |pin: &Pin| held.iter().any(|known| known.same(pin));
+        let arrived: Vec<_> = now
+            .iter()
+            .filter(|(uri, pin)| !self.mirrored.contains_key(uri) && !known(pin))
+            .filter_map(|(uri, pin)| Some((session.slug_for(uri)?, pin.clone())))
+            .collect();
+        let left: Vec<_> = self
+            .mirrored
+            .iter()
+            .filter(|(uri, pin)| !now.iter().any(|(held, _)| held == *uri) && known(pin))
+            .filter_map(|(uri, pin)| Some((session.slug_for(uri)?, pin.clone())))
+            .collect();
+        self.mirrored = now.into_iter().collect();
         if arrived.is_empty() && left.is_empty() {
             return;
         }
@@ -317,7 +397,7 @@ impl Pins {
                 settings.pin(slug, pin, None, &slugs, cx);
             }
         });
-        cx.notify();
+        self.changed(cx);
     }
 }
 
@@ -330,13 +410,13 @@ fn rank(kind: PinKind) -> u8 {
     }
 }
 
-/// The pin a provider's library row stands for, or `None` for a row Sonora cannot open on its own,
+/// The pin a provider's pin target stands for, or `None` for a row Sonora cannot open on its own,
 /// such as a folder or a podcast.
-fn pin_of(item: &LibraryItem) -> Option<Pin> {
+fn pin_of(item: &PinTarget) -> Option<Pin> {
     let kind = match item.kind {
-        LibraryItemKind::Playlist => PinKind::Playlist,
-        LibraryItemKind::Album => PinKind::Album,
-        LibraryItemKind::Artist => PinKind::Artist,
+        PinTargetKind::Playlist => PinKind::Playlist,
+        PinTargetKind::Album => PinKind::Album,
+        PinTargetKind::Artist => PinKind::Artist,
         _ => return None,
     };
     let (_, id) = item.uri.rsplit_once(':')?;
@@ -344,14 +424,24 @@ fn pin_of(item: &LibraryItem) -> Option<Pin> {
     Some(Pin::new(kind, id, item.name.clone()).cover(item.cover.clone()))
 }
 
+/// The provider's kind for a pin, or `None` for a song, which no provider pins.
+fn target_kind(kind: PinKind) -> Option<PinTargetKind> {
+    match kind {
+        PinKind::Playlist => Some(PinTargetKind::Playlist),
+        PinKind::Album => Some(PinTargetKind::Album),
+        PinKind::Artist => Some(PinTargetKind::Artist),
+        PinKind::Song => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::pin_of;
-    use music::{LibraryItem, LibraryItemKind};
+    use music::{PinTarget, PinTargetKind};
     use ui::PinKind;
 
-    fn item(uri: &str, kind: LibraryItemKind) -> LibraryItem {
-        LibraryItem {
+    fn item(uri: &str, kind: PinTargetKind) -> PinTarget {
+        PinTarget {
             uri: uri.to_owned(),
             name: "name".into(),
             subtitle: "subtitle".into(),
@@ -363,10 +453,10 @@ mod tests {
 
     #[test]
     fn a_library_row_keeps_only_its_bare_id() {
-        let pin = pin_of(&item("spotify:album:4aB", LibraryItemKind::Album)).unwrap();
+        let pin = pin_of(&item("spotify:album:4aB", PinTargetKind::Album)).unwrap();
         assert_eq!(pin.kind, PinKind::Album);
         assert_eq!(pin.id, "4aB");
-        assert!(pin_of(&item("spotify:show:4aB", LibraryItemKind::Show)).is_none());
-        assert!(pin_of(&item("bare", LibraryItemKind::Album)).is_none());
+        assert!(pin_of(&item("spotify:show:4aB", PinTargetKind::Show)).is_none());
+        assert!(pin_of(&item("bare", PinTargetKind::Album)).is_none());
     }
 }

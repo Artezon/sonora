@@ -2,31 +2,31 @@
 
 # Sonora
 
-[![Build](https://img.shields.io/github/actions/workflow/status/sonorahq/sonora/release.yml)](https://github.com/sonorahq/sonora/actions/workflows/release.yml)
-[![License](https://img.shields.io/github/license/sonorahq/sonora)](./COPYING)
-![Installs](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fsonora-stats.nolight.dev%2Fcount&query=%24.count&label=Installs&color=blue)
+[![Build](https://img.shields.io/github/actions/workflow/status/sonorahq/sonora/release.yml?style=flat-square&label=build)](https://github.com/sonorahq/sonora/actions/workflows/release.yml)
+[![License](https://img.shields.io/github/license/sonorahq/sonora?style=flat-square&label=license)](./COPYING)
+![Installs](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fsonora-stats.nolight.dev%2Fcount&query=%24.count&label=Installs&color=blue&style=flat-square)
 \
 [![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/a8N8Tx23rV)
 [![Matrix](https://img.shields.io/badge/Matrix-000000?style=for-the-badge&logo=matrix&logoColor=white)](https://matrix.to/#/#sonora:nolight.dev)
 
 ### A native music streaming client, built with Rust and GPUI
 
-Stream Spotify, YouTube Music, Subsonic/Navidrome and local files all in one **native** app
+Stream from your favorite services and play local files — all in one **native** app.
 </div>
 
 <div align="center">
     <table>
       <tr>
         <td colspan="2">
-          <img width="1602" height="992" alt="image" src="https://github.com/user-attachments/assets/d0357517-a28d-4c90-abd1-4f3e8d8cdedc" />
+          <img width="1613" height="981" alt="image" src="https://github.com/user-attachments/assets/7952a912-7fbc-4186-b467-a08dd7e71e22" />
         </td>
       </tr>
       <tr>
         <td width="50%">
-          <img width="1576" height="945" alt="image" src="https://github.com/user-attachments/assets/70979e4c-261f-4561-b671-04d28a9971a9" />
+          <img width="1623" height="987" alt="image" src="https://github.com/user-attachments/assets/580bf9d6-db85-4fde-b599-82ba2a28cc51" />
         </td>
         <td width="50%">
-          <img width="1576" height="945" alt="image" src="https://github.com/user-attachments/assets/ff3b4284-25e2-4487-bf9b-60d8f56dc44d" />
+          <img width="1623" height="987" alt="image" src="https://github.com/user-attachments/assets/64fcd709-5917-432c-a418-2e07527343d2" />
         </td>
       </tr>
     </table>
@@ -37,11 +37,21 @@ Stream Spotify, YouTube Music, Subsonic/Navidrome and local files all in one **n
     </sub>
 </div>
 
+> [!IMPORTANT]
+> **Sonora is not a piracy tool.**
+>
+> Sonora is not a platform for obtaining or sharing copyrighted material. We will not implement any functions that can be used to export decrypted streams, DRM licenses, content keys, or to convert protected streams into media files.
+>
+> Sonora is not designed to circumvent subscriptions or other restrictions put in place by music streaming platforms. If the service demands that you have a valid subscription in order to play back their tracks, so will Sonora.
+>
+> Features aimed at ripping, downloading, distributing, or gaining access to protected streaming content are out of scope for the project.
+
 ## Features
 
-* **Spotify, YouTube Music, Subsonic/OpenSubsonic,** and local playback
+* **Apple Music, Spotify, YouTube Music, Deezer, Subsonic/Navidrome** and local playback
 * Gapless playback, audio normalization, shuffle, sleep timer
 * Synced/karaoke lyrics, background vocals, and romanization
+* Scrobbling with LastFM, ListenBrainz, LibreFM, and Maloja
 * Themes, fonts, icons, transparency, blur, and window styling
 * Discord Rich Presence, native file opening
 * macOS, Windows, Linux, and (probably) FreeBSD support
@@ -89,15 +99,38 @@ Add the Sonora repository (updates with `flatpak update`):
 flatpak install --user https://sonorahq.github.io/sonora/sonora.flatpakref
 ```
 
+#### AppImage
+
+Download the `x86_64` AppImage from the
+[latest release](https://github.com/sonorahq/sonora/releases/latest), make it executable and run
+it:
+
+```sh
+chmod +x sonora-*.AppImage
+./sonora-*.AppImage
+```
+
+An `aarch64` build is published beside it. The AppImage carries no Vulkan driver and no ALSA
+bridge, so both still come from your system. It does not update itself, but it carries its update
+information, so [AppImageUpdate](https://github.com/AppImageCommunity/AppImageUpdate) or an
+AppImage manager such as [AppManager](https://github.com/kem-a/AppManager) can fetch a new release
+for you.
+
 ### Nix
 
-The flake packages the latest tagged release and exposes `programs.sonora` for Home Manager.
+The flake packages the latest tagged release binary or builds from source if unavailable for your platform.
 
 ```nix
 inputs.sonora.url = "github:sonorahq/sonora";
 ```
 
-Home Manager:
+```text
+inputs.sonora.packages.${system}.default
+inputs.sonora.packages.${system}.sonora (build from source)
+inputs.sonora.packages.${system}.sonora-bin (prebuilt, if available)
+```
+
+You can set configuration options via the included Home Manager module under `programs.sonora`:
 
 ```nix
 {
@@ -154,19 +187,20 @@ AI-assisted proofreading and translation of human-written text are permitted.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 574/574 | 100% |
-| Deutsch (`de`) | 536/574 | 93% |
-| Español (`es`) | 574/574 | 100% |
-| Français (`fr`) | 498/574 | 87% |
-| Italiano (`it`) | 495/574 | 86% |
-| Bahasa Indonesia (`id`) | 525/574 | 91% |
-| 日本語 (`ja`) | 508/574 | 89% |
-| Русский (`ru`) | 528/574 | 92% |
-| Українська (`uk`) | 574/574 | 100% |
-| Polski (`pl`) | 574/574 | 100% |
-| Português (Brasil) (`pt-BR`) | 514/574 | 90% |
-| 简体中文 (`zh-CN`) | 573/574 | 100% |
-| Türkçe (`tr`) | 548/574 | 95% |
+| English (`en-US`) | 742/742 | 100% |
+| Deutsch (`de`) | 629/742 | 85% |
+| Español (`es`) | 692/742 | 93% |
+| Français (`fr`) | 629/742 | 85% |
+| Italiano (`it`) | 607/742 | 82% |
+| Bahasa Indonesia (`id`) | 607/742 | 82% |
+| 日本語 (`ja`) | 607/742 | 82% |
+| Русский (`ru`) | 713/742 | 96% |
+| Українська (`uk`) | 713/742 | 96% |
+| Polski (`pl`) | 713/742 | 96% |
+| Português (Brasil) (`pt-BR`) | 607/742 | 82% |
+| 简体中文 (`zh-CN`) | 607/742 | 82% |
+| Türkçe (`tr`) | 607/742 | 82% |
+| Shqip (`sq`) | 716/742 | 96% |
 
 <!-- i18n:end -->
 

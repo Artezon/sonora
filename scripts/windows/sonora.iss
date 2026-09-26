@@ -25,7 +25,8 @@ Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed={#Arch}
 ArchitecturesInstallIn64BitMode={#Arch}
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=commandline dialog
 WizardStyle=modern
 
 [Tasks]
@@ -38,7 +39,7 @@ Source: "..\..\THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon; Check: not SilentUpgrade
 
 ; Lists Sonora in "Open With" for the file types it plays, without becoming the default
 ; handler for any of them (that's what OpenWithProgids under the extension key does, as
@@ -63,12 +64,22 @@ Root: HKCU; Subkey: "Software\Classes\.mka\OpenWithProgids"; ValueType: string; 
 Root: HKCU; Subkey: "Software\Classes\.wv\OpenWithProgids"; ValueType: string; ValueName: "Applications\{#AppExeName}"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.ape\OpenWithProgids"; ValueType: string; ValueName: "Applications\{#AppExeName}"; ValueData: ""; Flags: uninsdeletevalue
 
+; Setup runs elevated, and a [Run] entry inherits that unless it says otherwise: postinstall
+; entries default to runasoriginaluser, the relaunch after a silent update does not, and an
+; elevated Sonora is out of reach for tools like FancyZones that manage windows unelevated.
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\{#AppExeName}"; Flags: nowait; Check: RelaunchRequested
+Filename: "{app}\{#AppExeName}"; Flags: nowait runasoriginaluser; Check: RelaunchRequested
 
 [Code]
 function RelaunchRequested: Boolean;
 begin
   Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;
+
+// A silent run over an existing install is an update from the app or a package manager. It
+// leaves the desktop alone, so a shortcut the user deleted or replaced stays that way.
+function SilentUpgrade: Boolean;
+begin
+  Result := WizardSilent and (WizardForm.PrevAppDir <> '');
 end;

@@ -64,13 +64,6 @@ impl AuthConfig {
     }
 }
 
-/// Moves the credential file releases before 0.31 kept at the cache root into the
-/// Spotify folder. Part of the startup migration pass.
-pub(crate) fn migrate() {
-    let legacy = credentials::root().join(credentials::FILE);
-    credentials::adopt(&legacy, &AuthConfig::default().file());
-}
-
 pub fn release(config: &AuthConfig) {
     let Some(address) = socket_address(&config.redirect_uri) else {
         log::warn!(

@@ -7,9 +7,7 @@ const BASE: &str = "lucide";
 const KIND: &str = "svg";
 
 fn main() {
-    let assets = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo names the crate"))
-        .join("../../assets/icons");
-    let assets = assets.canonicalize().expect("cannot find assets/icons");
+    let assets = workspace().join("assets/icons");
 
     let mut folders = embed::tree(&assets, KIND);
     folders.sort_by_key(|(id, _)| (id != BASE, id.clone()));
@@ -57,4 +55,15 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").expect("cargo sets the output")).join("packs.rs");
     fs::write(&out, source).expect("cannot write the icon registry");
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// The workspace root, taken from the crate's own manifest directory without touching the
+/// filesystem, since `canonicalize` fails on a shared drive inside a Windows VM.
+fn workspace() -> PathBuf {
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo names the crate"));
+    manifest
+        .ancestors()
+        .nth(2)
+        .expect("the crate lives two levels under the workspace")
+        .to_path_buf()
 }

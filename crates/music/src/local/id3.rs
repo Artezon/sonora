@@ -75,7 +75,7 @@ pub fn read(path: &Path) -> Option<Lenient> {
             b"TPOS" if lenient.disc_number.is_none() => {
                 lenient.disc_number = text(body).and_then(|value| leading_number(&value));
             }
-            b"TYER" | b"TDRC" | b"TDAT" if lenient.year.is_none() => {
+            b"TYER" | b"TDRC" if lenient.year.is_none() => {
                 lenient.year = text(body).and_then(|value| value.get(0..4)?.parse().ok());
             }
             b"APIC" if lenient.cover.is_none() => lenient.cover = picture(body),
@@ -120,9 +120,10 @@ fn decode_utf16_frame(encoding: u8, bytes: &[u8]) -> String {
         (1, [0xFF, 0xFE, rest @ ..]) => (rest, false),
         _ => (bytes, true),
     };
-    let units = bytes.chunks_exact(2).map(|pair| match big_endian {
-        true => u16::from_be_bytes([pair[0], pair[1]]),
-        false => u16::from_le_bytes([pair[0], pair[1]]),
+    let (pairs, _) = bytes.as_chunks::<2>();
+    let units = pairs.iter().map(|&pair| match big_endian {
+        true => u16::from_be_bytes(pair),
+        false => u16::from_le_bytes(pair),
     });
     char::decode_utf16(units).filter_map(Result::ok).collect()
 }

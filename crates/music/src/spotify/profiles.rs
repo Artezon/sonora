@@ -6,7 +6,7 @@ use serde::Deserialize;
 use tokio::task::JoinSet;
 
 use crate::spotify::wire;
-use crate::{Contributor, Playlist, UserDetail};
+use crate::{Contributor, Playlist, UserDetail, escape};
 
 const USER_PREFIX: &str = "spotify:user:";
 const PLAYLIST_PREFIX: &str = "spotify:playlist:";
@@ -135,8 +135,16 @@ async fn counts(session: &Session, username: &str, found: &Profile) -> (Option<u
 async fn circle(session: &Session, username: &str, followers: bool) -> Option<u64> {
     let client = session.spclient();
     let body = match followers {
-        true => client.get_user_followers(username).await,
-        false => client.get_user_following(username).await,
+        true => {
+            client
+                .get_user_followers(&escape::component(username))
+                .await
+        }
+        false => {
+            client
+                .get_user_following(&escape::component(username))
+                .await
+        }
     }
     .inspect_err(|error| log::debug!("profiles: cannot count the circle of {username}: {error}"))
     .ok()?;
@@ -151,7 +159,7 @@ async fn circle(session: &Session, username: &str, followers: bool) -> Option<u6
 async fn fetch(session: &Session, username: &str, playlists: u32) -> Option<Profile> {
     let body = session
         .spclient()
-        .get_user_profile(username, Some(playlists), Some(0))
+        .get_user_profile(&escape::component(username), Some(playlists), Some(0))
         .await
         .inspect_err(|error| log::debug!("profiles: cannot resolve {username}: {error}"))
         .ok()?;

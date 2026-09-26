@@ -99,7 +99,7 @@ impl PlaylistSource {
             playback.play_origin(played.clone(), cx)
         });
 
-        cells::index(cell, state, true, None, press, cx)
+        cells::index(cell, state, true, None, None, press, cx)
     }
 
     pub(super) fn at(&self, row: usize, cx: &App) -> Option<Playlist> {
@@ -129,7 +129,7 @@ impl TableSource for PlaylistSource {
         })
     }
 
-    fn filter_axes(&self, _query: &str, _cx: &App) -> Vec<Filter> {
+    fn filter_axes(&self, _cx: &App) -> Vec<Filter> {
         vec![Filter::Flag(FlagAxis {
             key: "filter-owned",
             label: t!("filter-owned"),
@@ -180,7 +180,6 @@ impl TableSource for PlaylistSource {
         Some(playlist_menu(
             self.at(*rows.first()?, cx)?,
             self.playback.clone(),
-            false,
             cx,
         ))
     }

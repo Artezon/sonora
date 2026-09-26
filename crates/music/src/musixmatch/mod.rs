@@ -336,7 +336,7 @@ fn credited(copyright: &str) -> Vec<String> {
 }
 
 fn seconds(value: f64) -> Duration {
-    Duration::from_secs_f64(value.max(0.))
+    Duration::try_from_secs_f64(value.max(0.)).unwrap_or_default()
 }
 
 fn path() -> PathBuf {

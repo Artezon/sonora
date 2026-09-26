@@ -10,7 +10,7 @@ use ui::rank::{HANDY, NICE, SPARE, USEFUL};
 use ui::{Cell, ColumnSpec, Menu, Pin, TableSource, Width};
 
 use crate::shared::cells::{self, DATE, NUMBER, TRAILING, YEAR};
-use crate::shared::menus::album_menu;
+use crate::shared::menus::{ItemMenu, album_menu};
 use crate::shared::pins::Pinned as _;
 use crate::shared::text::{folded, holds};
 use crate::shared::tracks::initial;
@@ -91,6 +91,8 @@ pub(super) const COLUMNS: &[ColumnSpec<AlbumField>] = &[
 pub(super) struct AlbumSource {
     library: Entity<Library>,
     playback: Entity<Playback>,
+    /// The state of the row menu's Add to playlist submenu.
+    menu: ItemMenu,
     shelf: Shelf,
     year_span: Option<(f32, f32)>,
     starred: bool,
@@ -98,7 +100,7 @@ pub(super) struct AlbumSource {
 }
 
 struct Spread {
-    stamp: (usize, String),
+    stamp: usize,
     years: Vec<f32>,
 }
 
@@ -106,11 +108,13 @@ impl AlbumSource {
     pub(super) fn shelved(
         library: Entity<Library>,
         playback: Entity<Playback>,
+        menu: ItemMenu,
         shelf: Shelf,
     ) -> Self {
         Self {
             library,
             playback,
+            menu,
             shelf,
             year_span: None,
             starred: false,
@@ -126,15 +130,18 @@ impl AlbumSource {
             playback.play_origin(played.clone(), cx)
         });
 
-        cells::index(cell, state, true, None, press, cx)
+        cells::index(cell, state, true, None, None, press, cx)
     }
 
     pub(super) fn at(&self, row: usize, cx: &App) -> Option<Album> {
         self.albums(cx).get(row).cloned()
     }
 
-    pub(super) fn years(&self, query: &str, cx: &App) -> Vec<f32> {
-        let stamp = (self.albums(cx).len(), query.to_owned());
+    /// Every year the shelf holds, in order and without repeats. The stops deliberately ignore
+    /// the search and the other filters, so narrowing the grid to nothing still leaves the
+    /// slider standing at its full span.
+    pub(super) fn years(&self, cx: &App) -> Vec<f32> {
+        let stamp = self.albums(cx).len();
         if let Some(spread) = self.spread.borrow().as_ref()
             && spread.stamp == stamp
         {
@@ -144,7 +151,7 @@ impl AlbumSource {
         let mut years: Vec<f32> = self
             .albums(cx)
             .iter()
-            .filter(|album| album.year > 0 && hits(album, query))
+            .filter(|album| album.year > 0)
             .map(|album| album.year as f32)
             .collect();
         years.sort_by(f32::total_cmp);
@@ -193,9 +200,9 @@ impl TableSource for AlbumSource {
         })
     }
 
-    fn filter_axes(&self, query: &str, cx: &App) -> Vec<Filter> {
+    fn filter_axes(&self, cx: &App) -> Vec<Filter> {
         let mut axes = Vec::new();
-        let years = self.years(query, cx);
+        let years = self.years(cx);
         if let (Some(first), Some(last)) = (years.first(), years.last()) {
             let bounds = (*first, *last);
             let value = self.year_span.unwrap_or(bounds);
@@ -269,9 +276,13 @@ impl TableSource for AlbumSource {
         Some(album_menu(
             self.at(*rows.first()?, cx)?,
             self.playback.clone(),
-            false,
+            &self.menu,
             cx,
         ))
+    }
+
+    fn context_menu_will_open(&self, _rows: &[usize], cx: &App) {
+        self.menu.reset(cx);
     }
 
     fn cell(&self, cell: Cell<AlbumField>, cx: &mut App) -> AnyElement {

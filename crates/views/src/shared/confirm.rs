@@ -1,8 +1,8 @@
 use gpui::prelude::*;
 use gpui::{App, Context, Entity, FocusHandle, Global, Render, Window, div};
 use i18n::t;
-use music::{Album, SavedArtist, Track};
-use state::{Detail, History, Sonora};
+use music::{Album, SavedArtist, Shape, Track};
+use state::{Detail, History, Io, Outcome, Shelf, Sonora, Toasts};
 use ui::{Button, Dismiss, FORM_CONTEXT, Modal, Submit};
 
 #[derive(Clone, Copy)]
@@ -13,6 +13,8 @@ pub(crate) enum Kind {
     Albums(usize),
     Artists(usize),
     Playlists(usize),
+    DeleteTrackFiles(usize),
+    Widevine,
 }
 
 impl Kind {
@@ -20,6 +22,8 @@ impl Kind {
         match self {
             Self::PlaylistSongs(_) => t!("confirm-remove-playlist-title"),
             Self::History(_) => t!("confirm-remove-history-title"),
+            Self::DeleteTrackFiles(_) => t!("confirm-delete-track-files-title"),
+            Self::Widevine => t!("confirm-uninstall-widevine-title"),
             _ => t!("confirm-remove-library-title"),
         }
     }
@@ -32,11 +36,16 @@ impl Kind {
             Self::Albums(count) => t!("confirm-remove-albums", count = count),
             Self::Artists(count) => t!("confirm-remove-artists", count = count),
             Self::Playlists(count) => t!("confirm-remove-playlists", count = count),
+            Self::DeleteTrackFiles(count) => t!("confirm-delete-track-files", count = count),
+            Self::Widevine => t!("confirm-uninstall-widevine"),
         }
     }
 
     fn action(&self) -> gpui::SharedString {
-        t!("common-delete")
+        match self {
+            Self::Widevine => t!("settings-widevine-uninstall"),
+            _ => t!("common-delete"),
+        }
     }
 }
 
@@ -72,6 +81,13 @@ impl Confirm {
         cx.global::<Installed>().0.clone()
     }
 
+    /// Whether taking the heart off `id` only unstars it, so no question is worth asking. On a
+    /// `Shape::Catalog` shelf the favorites sit over a library that stays put; on a
+    /// `Shape::Saved` one the heart is the library itself, and the question stands.
+    pub(crate) fn unstarring(id: &str, cx: &App) -> bool {
+        Sonora::global(cx).library.read(cx).shape(Shelf::of(id)) == Shape::Catalog
+    }
+
     pub fn ask(kind: Kind, apply: impl FnOnce(&mut App) + 'static, cx: &mut App) {
         let confirm = Self::entity(cx);
         confirm.update(cx, |this, cx| {
@@ -88,14 +104,19 @@ impl Confirm {
         if tracks.is_empty() {
             return;
         }
-        Self::ask(
-            Kind::LibrarySongs(tracks.len()),
-            move |cx| {
-                let library = Sonora::global(cx).library.clone();
-                library.update(cx, |library, cx| library.save_tracks(tracks, false, cx));
-            },
-            cx,
-        );
+        let tracks_len = tracks.len();
+        let starred = tracks
+            .first()
+            .and_then(|track| track.id.as_deref())
+            .is_some_and(|id| Self::unstarring(id, cx));
+        let apply = move |cx: &mut App| {
+            let library = Sonora::global(cx).library.clone();
+            library.update(cx, |library, cx| library.save_tracks(tracks, false, cx));
+        };
+        match starred {
+            true => apply(cx),
+            false => Self::ask(Kind::LibrarySongs(tracks_len), apply, cx),
+        }
     }
 
     pub fn playlist_songs(ids: Vec<String>, detail: Entity<Detail>, count: usize, cx: &mut App) {
@@ -132,36 +153,44 @@ impl Confirm {
         if albums.is_empty() {
             return;
         }
-        Self::ask(
-            Kind::Albums(albums.len()),
-            move |cx| {
-                let library = Sonora::global(cx).library.clone();
-                library.update(cx, |library, cx| {
-                    for album in albums {
-                        library.toggle_album(album, cx);
-                    }
-                });
-            },
-            cx,
-        );
+        let count = albums.len();
+        let starred = albums
+            .first()
+            .is_some_and(|album| Self::unstarring(&album.id, cx));
+        let apply = move |cx: &mut App| {
+            let library = Sonora::global(cx).library.clone();
+            library.update(cx, |library, cx| {
+                for album in albums {
+                    library.toggle_album(album, cx);
+                }
+            });
+        };
+        match starred {
+            true => apply(cx),
+            false => Self::ask(Kind::Albums(count), apply, cx),
+        }
     }
 
     pub fn artists(artists: Vec<SavedArtist>, cx: &mut App) {
         if artists.is_empty() {
             return;
         }
-        Self::ask(
-            Kind::Artists(artists.len()),
-            move |cx| {
-                let library = Sonora::global(cx).library.clone();
-                library.update(cx, |library, cx| {
-                    for artist in artists {
-                        library.toggle_artist(artist, cx);
-                    }
-                });
-            },
-            cx,
-        );
+        let count = artists.len();
+        let starred = artists
+            .first()
+            .is_some_and(|artist| Self::unstarring(&artist.id, cx));
+        let apply = move |cx: &mut App| {
+            let library = Sonora::global(cx).library.clone();
+            library.update(cx, |library, cx| {
+                for artist in artists {
+                    library.toggle_artist(artist, cx);
+                }
+            });
+        };
+        match starred {
+            true => apply(cx),
+            false => Self::ask(Kind::Artists(count), apply, cx),
+        }
     }
 
     pub fn playlists(ids: Vec<String>, cx: &mut App) {
@@ -177,6 +206,65 @@ impl Confirm {
                         library.remove_playlist_from_library(id, cx);
                     }
                 });
+            },
+            cx,
+        );
+    }
+
+    pub fn delete_track_files(ids: Vec<String>, cx: &mut App) {
+        if ids.is_empty() {
+            return;
+        }
+        Self::ask(
+            Kind::DeleteTrackFiles(ids.len()),
+            move |cx| {
+                let sonora = Sonora::global(cx);
+                let Some(provider) = sonora.session.read(cx).local_client() else {
+                    return;
+                };
+                let library = sonora.library.clone();
+                let playback = sonora.playback.clone();
+                let io = Io::global(cx);
+                cx.spawn(async move |cx| {
+                    let result = io
+                        .spawn(async move {
+                            let mut failed = 0;
+                            let mut deleted = Vec::new();
+                            for id in ids {
+                                match provider.delete_track_file(&id).await {
+                                    Ok(()) => deleted.push(id),
+                                    Err(error) => {
+                                        failed += 1;
+                                        log::warn!(
+                                            "local: cannot delete track file {id}: {error:#}"
+                                        );
+                                    }
+                                }
+                            }
+                            (failed, deleted)
+                        })
+                        .await;
+
+                    if let Ok((_, ref deleted)) = result {
+                        library.update(cx, |library, cx| library.hide_local_tracks(deleted, cx));
+                        playback.update(cx, |playback, cx| playback.remove_from_queue(deleted, cx));
+                    }
+                    match result {
+                        Ok((failed, _)) if failed > 0 => {
+                            cx.update(|cx| {
+                                Toasts::show(Outcome::Failed, "toast-local-delete-failed", cx);
+                            });
+                        }
+                        Err(error) => {
+                            log::warn!("local: deletion task failed: {error}");
+                            cx.update(|cx| {
+                                Toasts::show(Outcome::Failed, "toast-local-delete-failed", cx);
+                            });
+                        }
+                        Ok(_) => {}
+                    }
+                })
+                .detach();
             },
             cx,
         );
@@ -243,7 +331,7 @@ impl Render for Confirm {
                     )
                     .action(
                         Button::new("apply-confirm")
-                            .danger()
+                            .destructive()
                             .label(action)
                             .on_click(cx.listener(|this, _, window, cx| this.apply(window, cx))),
                     )

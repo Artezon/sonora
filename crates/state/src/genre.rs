@@ -94,9 +94,9 @@ impl Genres {
 
             this.update(cx, |this, cx| {
                 this.loading = false;
-                match loaded {
+                match crate::settled(loaded, cx) {
                     Ok(genres) => this.genres = Rc::new(genres),
-                    Err(error) => this.error = Some(format!("{error:#}")),
+                    Err(reason) => this.error = Some(reason),
                 }
                 cx.notify();
             })
@@ -154,6 +154,10 @@ impl GenreDetails {
         }
     }
 
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
+    }
+
     pub fn name(&self) -> Option<&str> {
         self.detail.as_ref().map(|detail| detail.name.as_str())
     }
@@ -206,9 +210,9 @@ impl GenreDetails {
 
                 this.loading = false;
                 this.request = None;
-                match loaded {
+                match crate::settled(loaded, cx) {
                     Ok(detail) => this.adopt(&id, detail, cx),
-                    Err(error) => this.error = Some(format!("{error:#}")),
+                    Err(reason) => this.error = Some(reason),
                 }
                 cx.notify();
             })

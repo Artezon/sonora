@@ -13,7 +13,7 @@ use router::{Destination, Link as _, navigate};
 use state::{Playback, PlaybackState};
 use ui::{
     ActiveTheme as _, Artwork, Avatar, Cell, ExplicitBadge, InlineLink, InlineLinks, ROW_GROUP,
-    Theme,
+    Theme, clock, tabular,
 };
 
 use crate::chrome::Chrome;
@@ -83,10 +83,13 @@ impl RenderOnce for Face {
     }
 }
 
+/// The transport cell at the head of a row. `number` is the label the row rests at; `None`
+/// counts the rows, which is what a list with no numbering of its own wants.
 pub(crate) fn index<F>(
     cell: &Cell<F>,
     state: Option<PlaybackState>,
     playable: bool,
+    number: Option<SharedString>,
     preload: Option<Tap>,
     press: Option<Tap>,
     cx: &App,
@@ -114,7 +117,7 @@ pub(crate) fn index<F>(
                 false => faded,
             })
             .group_hover(ROW_GROUP, |style| style.invisible())
-            .child(format!("{}", cell.display + 1))
+            .child(number.unwrap_or_else(|| SharedString::from((cell.display + 1).to_string())))
             .into_any_element(),
     };
 
@@ -294,6 +297,14 @@ fn line<F>(cell: &Cell<F>, color: Option<Hsla>) -> Div {
 pub(crate) fn dim<F>(cell: &Cell<F>, value: impl Into<SharedString>, muted: Hsla) -> AnyElement {
     line(cell, Some(muted))
         .child(value.into())
+        .into_any_element()
+}
+
+/// A track length in tabular digits, so the column reads as a monospace strip.
+pub(crate) fn length<F>(cell: &Cell<F>, value: Duration, muted: Hsla) -> AnyElement {
+    line(cell, Some(muted))
+        .font_features(tabular())
+        .child(clock(value))
         .into_any_element()
 }
 

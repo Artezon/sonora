@@ -16,6 +16,8 @@ actions!(
         TogglePlayback,
         SongPrevious,
         SongNext,
+        ToggleShuffle,
+        ToggleRepeat,
         NavigateBack,
         NavigateForward,
         OpenFilter,

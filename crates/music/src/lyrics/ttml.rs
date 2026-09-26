@@ -219,7 +219,8 @@ fn stamp(node: Node, name: &str) -> Option<Duration> {
     for part in stamp.split(':') {
         seconds = seconds * 60. + part.parse::<f64>().ok()?;
     }
-    seconds
-        .is_finite()
-        .then(|| Duration::from_secs_f64(seconds.max(0.)))
+    if !seconds.is_finite() {
+        return None;
+    }
+    Duration::try_from_secs_f64(seconds.max(0.)).ok()
 }

@@ -4,20 +4,26 @@ use gpui::{
     StyleRefinement, Window, div, px, svg,
 };
 
+use crate::glass::{blurring, frost};
 use crate::metrics::Text;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tooltip};
 
 const FADED: f32 = 0.55;
+/// How much of a white tint a frosted ghost or outline button shows when hovered
+/// and when pressed, so the fill lightens the content under the glass blur rather than
+/// laying a themed slab over it.
+const TINT_HOVER: f32 = 0.14;
+const TINT_ACTIVE: f32 = 0.24;
 
 type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 enum Variant {
-    Secondary,
     Ghost,
+    Secondary,
     Outline,
     Primary,
-    Danger,
+    Destructive,
 }
 
 #[derive(IntoElement)]
@@ -32,7 +38,9 @@ pub struct Button {
     selected: bool,
     backgroundless: bool,
     hoverless: bool,
+    frosted: bool,
     hovered: Option<StyleRefinement>,
+    fill: Option<(Hsla, Hsla)>,
     pressed: Option<StyleRefinement>,
     tint: Option<Hsla>,
     tooltip: Option<(SharedString, Perch)>,
@@ -47,13 +55,15 @@ impl Button {
             label: None,
             icon: None,
             trailing: None,
-            variant: Variant::Secondary,
+            variant: Variant::Ghost,
             small: false,
             disabled: false,
             selected: false,
             backgroundless: false,
             hoverless: false,
+            frosted: false,
             hovered: None,
+            fill: None,
             pressed: None,
             tint: None,
             tooltip: None,
@@ -76,8 +86,16 @@ impl Button {
         self
     }
 
+    /// What a button is without asking, kept for a call site that wants to say so.
     pub fn ghost(mut self) -> Self {
         self.variant = Variant::Ghost;
+        self
+    }
+
+    /// A filled neutral button, for one that floats over content and would go unseen
+    /// without a surface of its own.
+    pub fn secondary(mut self) -> Self {
+        self.variant = Variant::Secondary;
         self
     }
 
@@ -91,8 +109,9 @@ impl Button {
         self
     }
 
-    pub fn danger(mut self) -> Self {
-        self.variant = Variant::Danger;
+    /// Filled in the danger colour, for an action that takes something away.
+    pub fn destructive(mut self) -> Self {
+        self.variant = Variant::Destructive;
         self
     }
 
@@ -111,6 +130,14 @@ impl Button {
         self
     }
 
+    /// Replaces the variant's fill and the colour it lifts to on hover, for a
+    /// button that carries a colour of its own rather than the theme's. The
+    /// press state follows the hover.
+    pub fn fill(mut self, background: Hsla, hover: Hsla) -> Self {
+        self.fill = Some((background, hover));
+        self
+    }
+
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
@@ -123,6 +150,15 @@ impl Button {
 
     pub fn hoverless(mut self) -> Self {
         self.hoverless = true;
+        self
+    }
+
+    /// Blurs whatever the hover and press fills float over. Only for buttons
+    /// that sit on real content, like the fullscreen transport over the ambient
+    /// background. Anywhere else the backdrop is flat paint and the blur buys
+    /// nothing.
+    pub fn frosted(mut self) -> Self {
+        self.frosted = true;
         self
     }
 
@@ -190,7 +226,9 @@ impl RenderOnce for Button {
             selected,
             backgroundless,
             hoverless,
+            frosted,
             hovered,
+            fill,
             pressed,
             tint,
             tooltip,
@@ -198,10 +236,22 @@ impl RenderOnce for Button {
         } = self;
 
         let theme = cx.theme();
+        // A plain ghost floats over flat paint, so it hovers with the themed
+        // secondary fill that stays visible on both dark and light surfaces. A
+        // frosted ghost floats over real content under blur, so it hovers with
+        // a white tint instead: a themed fill would read as a solid slab over
+        // the blur, and a black tint would vanish into dark artwork. Only
+        // frosted buttons use the tint.
         let subtle = |border| Palette {
             background: None,
-            hover: Some(theme.secondary_hover),
-            active: Some(theme.secondary_active),
+            hover: Some(match frosted {
+                true => theme.overlay_foreground.opacity(TINT_HOVER),
+                false => theme.secondary_hover,
+            }),
+            active: Some(match frosted {
+                true => theme.overlay_foreground.opacity(TINT_ACTIVE),
+                false => theme.secondary_active,
+            }),
             foreground: theme.foreground,
             border,
         };
@@ -223,8 +273,15 @@ impl RenderOnce for Button {
             Variant::Ghost => subtle(None),
             Variant::Outline => subtle(Some(theme.border)),
             Variant::Primary => solid(theme.primary, theme.primary_hover, theme.primary_foreground),
-            Variant::Danger => solid(theme.danger, theme.danger_hover, theme.danger_foreground),
+            Variant::Destructive => {
+                solid(theme.danger, theme.danger_hover, theme.danger_foreground)
+            }
         };
+        if let Some((background, hover)) = fill {
+            palette.background = Some(background);
+            palette.hover = Some(hover);
+            palette.active = Some(hover);
+        }
         if backgroundless {
             palette.background = None;
             palette.hover = None;
@@ -236,6 +293,7 @@ impl RenderOnce for Button {
                 false => theme.muted_foreground.opacity(FADED),
             };
             palette.background = palette.background.map(|_| theme.muted);
+            palette.border = palette.border.map(|_| theme.border);
             palette.hover = None;
             palette.active = None;
         }
@@ -243,6 +301,9 @@ impl RenderOnce for Button {
         let selected_background = theme.secondary_active;
         let radius = theme.radius;
         let interactive = !disabled;
+        // The white hover tint follows `frosted` whatever the setting says, since it is
+        // there for a button floating over artwork; only the blur itself is optional.
+        let frosting = frosted && interactive && blurring(cx);
         let foreground = match disabled {
             true => palette.foreground,
             false => tint.unwrap_or(palette.foreground),
@@ -257,9 +318,9 @@ impl RenderOnce for Button {
         };
         let hovered = match hoverless {
             true => None,
-            false => state_style(hover, hovered),
+            false => state_style(hover, hovered, frosting),
         };
-        let pressed = state_style(active, pressed);
+        let pressed = state_style(active, pressed, frosting);
         let overrides = std::mem::take(base.style());
 
         let mut button = base
@@ -328,6 +389,7 @@ impl RenderOnce for Button {
 fn state_style(
     background: Option<Hsla>,
     overrides: Option<StyleRefinement>,
+    frosted: bool,
 ) -> Option<StyleRefinement> {
     if background.is_none() && overrides.is_none() {
         return None;
@@ -335,7 +397,11 @@ fn state_style(
 
     let mut style = StyleRefinement::default();
     if let Some(background) = background {
-        style = style.bg(background);
+        let filled = style.bg(background);
+        style = match frosted {
+            true => frost(filled),
+            false => filled,
+        };
     }
     if let Some(overrides) = overrides {
         style.refine(&overrides);

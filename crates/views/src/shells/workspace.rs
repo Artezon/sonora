@@ -7,15 +7,17 @@ use input::WORKSPACE_CONTEXT;
 use state::{Playback, Queue, SideTab};
 use ui::{
     Activate, ActiveTheme as _, Deselect, Remove, SelectNext, SelectPrevious, ease_out_expo,
-    entrance_span, shown_listing, veiled,
+    entering, entrance_span, shown_listing, veiled,
 };
 
 use crate::chrome::{
     Chrome, PlayerBar, SidebarLeft, SidebarRight, TitleBarOptions, ToastStack, UpdateNotice,
 };
 use crate::shared::confirm::Confirm;
+use crate::shared::menus::CardMenu;
 use crate::shared::playlist_editor::PlaylistEditor;
 use crate::shared::tag_editor::TagEditor;
+use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
 
 #[derive(Clone, Copy)]
@@ -46,9 +48,14 @@ pub(crate) struct Workspace {
     playlist_editor: Entity<PlaylistEditor>,
     tag_editor: Entity<TagEditor>,
     confirm: Entity<Confirm>,
+    card_menu: Entity<CardMenu>,
+    widevine: Entity<WidevinePrompt>,
     toasts: Entity<ToastStack>,
     notice: Entity<UpdateNotice>,
     content: AnyView,
+    /// A screen's own header, floated over the top of the page and outside its transition.
+    /// The page pads itself to start beneath it.
+    header: Option<AnyView>,
     transition: Option<ContentTransition>,
     focus: FocusHandle,
 }
@@ -71,9 +78,12 @@ impl Workspace {
             playlist_editor: PlaylistEditor::entity(cx),
             tag_editor: TagEditor::entity(cx),
             confirm: Confirm::entity(cx),
+            card_menu: CardMenu::entity(cx),
+            widevine: cx.new(WidevinePrompt::new),
             toasts: cx.new(ToastStack::new),
             notice: cx.new(UpdateNotice::new),
             content,
+            header: None,
             transition: None,
             focus: cx.focus_handle(),
         }
@@ -101,8 +111,16 @@ impl Workspace {
         &self.content
     }
 
-    pub fn set_content(&mut self, content: AnyView, cx: &mut Context<Self>) {
+    /// Shows a page, with the header it wants above it or none. The two arrive together so
+    /// a header can never outlive its screen.
+    pub fn set_content(
+        &mut self,
+        content: AnyView,
+        header: Option<AnyView>,
+        cx: &mut Context<Self>,
+    ) {
         self.content = content;
+        self.header = header;
         cx.notify();
     }
 
@@ -158,17 +176,18 @@ impl Shell for Workspace {
             offset: sidebar.occupied_width(),
             border: true,
             content,
+            transparent: false,
         }
     }
 }
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let right = self.sidebar_right.read(cx).occupied_width(window);
         self.sidebar
-            .update(cx, |sidebar, cx| sidebar.adapt(window, cx));
+            .update(cx, |sidebar, cx| sidebar.adapt(right, window, cx));
         let left = self.sidebar.read(cx).occupied_width();
         let overlay_width = self.sidebar.read(cx).overlay_width();
-        let right = self.sidebar_right.read(cx).occupied_width(window);
         Chrome::publish(left, right, cx);
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
@@ -187,7 +206,36 @@ impl Render for Workspace {
                 .into_any_element(),
         };
         let hidden = self.hidden(window, cx);
+        // The scrim is what fades the outgoing page: it is the page's own colour at
+        // full strength, so covering the content with it costs no layout and the
+        // content view keeps its cache. A see-through window has no such colour. The
+        // scrim would be one more translucent layer over the one the root already
+        // paints, and the content area would sit visibly darker than the chrome
+        // around it for the length of the transition — a quad can only add coverage,
+        // never replace it. There the content carries the fade itself, which is the
+        // same curve at the price of leaving the cached layout path while it runs.
+        let dissolving = cx.theme().transparent;
+        let scrim = match dissolving {
+            true => 0.,
+            false => hidden,
+        };
         let backdrop = cx.theme().background;
+        // That price has to be paid for real, not merely accepted: opacity is baked
+        // into a primitive as it is painted, and a cached view replays its primitives
+        // until something notifies it, so a fading page that stayed cached would be
+        // recorded on the first frame, nearly clear, and replayed that way long after
+        // the transition had ended. While it carries its own fade the content is
+        // rendered uncached. Every screen sizes its root `size_full`, so the layout
+        // is the one the cache would have used, and only the frames of the
+        // transition pay for the render.
+        let content = match dissolving && hidden > 0. {
+            true => self.content.clone().into_any_element(),
+            false => self
+                .content
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
+        };
 
         div()
             .relative()
@@ -245,36 +293,56 @@ impl Render for Workspace {
                             .min_h_0()
                             .ml(overlay_width)
                             .when(overlay, |this| this.overflow_hidden())
-                            .when(hidden > 0., |this| this.overflow_hidden())
                             .when(covered, |this| this.hidden())
                             .child(
                                 div()
-                                    .absolute()
-                                    .left(-overlay_width)
-                                    .right_0()
-                                    .top_0()
-                                    .bottom_0()
+                                    .relative()
                                     .flex()
                                     .flex_col()
-                                    .map(|this| veiled(this, hidden))
+                                    .flex_1()
+                                    .min_h_0()
+                                    .when(hidden > 0., |this| this.overflow_hidden())
                                     .child(
-                                        self.content
-                                            .clone()
-                                            .cached(StyleRefinement::default().size_full()),
-                                    ),
-                            )
-                            .when(hidden > 0., |this| {
-                                this.child(
-                                    div()
-                                        .absolute()
-                                        .left_0()
-                                        .right_0()
-                                        .top_0()
-                                        .bottom_0()
-                                        .bg(backdrop)
-                                        .opacity(hidden),
-                                )
-                            }),
+                                        div()
+                                            .absolute()
+                                            .left(-overlay_width)
+                                            .right_0()
+                                            .top_0()
+                                            .bottom_0()
+                                            .flex()
+                                            .flex_col()
+                                            .map(|this| match dissolving {
+                                                true => entering(this, hidden),
+                                                false => veiled(this, hidden),
+                                            })
+                                            .child(content),
+                                    )
+                                    .when(scrim > 0., |this| {
+                                        this.child(
+                                            div()
+                                                .absolute()
+                                                .left_0()
+                                                .right_0()
+                                                .top_0()
+                                                .bottom_0()
+                                                .bg(backdrop)
+                                                .opacity(scrim),
+                                        )
+                                    })
+                                    // The header comes last, so it paints over the page and
+                                    // the scrim, and spans the same width the page does
+                                    // beneath an overlaid sidebar.
+                                    .when_some(self.header.clone(), |this, header| {
+                                        this.child(
+                                            div()
+                                                .absolute()
+                                                .left(-overlay_width)
+                                                .right_0()
+                                                .top_0()
+                                                .child(header),
+                                        )
+                                    }),
+                            ),
                     )
                     .child(self.sidebar_right.clone())
                     .when(overlay, |this| this.child(self.sidebar.clone())),
@@ -289,9 +357,11 @@ impl Render for Workspace {
                     )
                     .child(self.toasts.clone()),
             )
+            .child(self.card_menu.clone())
             .child(self.playlist_editor.clone())
             .child(self.tag_editor.clone())
             .child(self.confirm.clone())
+            .child(self.widevine.clone())
             .child(self.notice.clone())
     }
 }

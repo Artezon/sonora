@@ -1,12 +1,13 @@
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient, activity};
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
-use i18n::t;
-use music::Track;
+use music::artwork::{ArtworkQuery, ArtworkSearch};
+use music::{MediaKind, MusicProvider, Track};
 use tokio::sync::watch;
 
-use crate::{AppSettings, Cover, DiscordName, Io, Playback, Session};
+use crate::{AppSettings, Cover, DiscordName, Io, Playback, Session, Shelf, join};
 
 const APPLICATION_ID: &str = "1547350467904806923";
 const RETRY_DELAY: Duration = Duration::from_secs(3);
@@ -15,6 +16,8 @@ const MAX_START_DRIFT_SECONDS: u64 = 2;
 const MAX_TEXT_UTF16_UNITS: usize = 128;
 /// What the status says when it names the music rather than a service.
 const MUSIC: &str = "Music";
+/// Where the Sonora button sends a friend who presses it.
+const SONORA_URL: &str = "https://sonorahq.org";
 
 struct Attached {
     _discord: Entity<Discord>,
@@ -38,7 +41,7 @@ pub(crate) fn attach(
 enum Shown {
     #[default]
     Off,
-    On(Presence),
+    On(Box<Presence>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -50,16 +53,25 @@ struct Presence {
     image_text: Option<String>,
     started_at: Option<i64>,
     ends_at: Option<i64>,
+    buttons: Option<Vec<Button>>,
+}
+
+/// A link under the status. Discord shows at most two, and only to other people, so the user
+/// never sees their own buttons.
+#[derive(Clone, Debug, PartialEq)]
+struct Button {
+    label: String,
+    url: String,
 }
 
 /// The provider a track came from, as the presence shows it. `badge` is the provider slug, which
 /// doubles as the key of the image uploaded to the Discord application, and is left out when the
 /// badge is turned off. `listening` is what the status calls itself and follows the setting;
 /// `name` is the badge tooltip and is always the provider's own name.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Source {
     badge: Option<&'static str>,
-    listening: Option<&'static str>,
+    listening: Option<String>,
     name: &'static str,
 }
 
@@ -100,6 +112,15 @@ struct Discord {
     cover: Entity<Cover>,
     sender: watch::Sender<Shown>,
     timing: Timing,
+    io: Io,
+    artwork: ArtworkSearch,
+    /// Covers found by name, and the queries that found nothing, so neither is asked twice.
+    found: HashMap<ArtworkQuery, Option<String>>,
+    /// The query the last presence had no cover for, taken by `look_up` once it is published.
+    wanted: Option<ArtworkQuery>,
+    /// The query last sent to the search. A failed one is not retried until another was asked.
+    asked: Option<ArtworkQuery>,
+    lookup: Option<Task<()>>,
     _worker: Task<()>,
 }
 
@@ -133,6 +154,12 @@ impl Discord {
             cover,
             sender,
             timing: Timing::default(),
+            io,
+            artwork: ArtworkSearch::new(),
+            found: HashMap::new(),
+            wanted: None,
+            asked: None,
+            lookup: None,
             _worker,
         }
     }
@@ -146,20 +173,53 @@ impl Discord {
             }
             changed
         });
+        self.look_up(cx);
+    }
+
+    /// Searches for the cover the last presence went without, then publishes again with it.
+    /// Replacing the previous task throws away the answer for a track that is no longer playing.
+    fn look_up(&mut self, cx: &mut Context<Self>) {
+        let Some(query) = self.wanted.take() else {
+            return;
+        };
+        if self.asked.as_ref() == Some(&query) {
+            return;
+        }
+        self.asked = Some(query.clone());
+
+        let search = self.artwork.clone();
+        let io = self.io.clone();
+        self.lookup = Some(cx.spawn(async move |this, cx| {
+            let wanted = query.clone();
+            let found = join(io.spawn(async move { search.find(&wanted).await })).await;
+
+            this.update(cx, |this, cx| {
+                this.lookup = None;
+                match found {
+                    Ok(cover) => {
+                        this.found.insert(query, cover);
+                        this.publish(cx);
+                    }
+                    Err(error) => log::warn!("discord: cannot look up the artwork: {error:#}"),
+                }
+            })
+            .ok();
+        }));
     }
 
     fn shown(&mut self, cx: &App) -> Shown {
+        self.wanted = None;
         let playback = self.playback.read(cx);
         let Some(track) = playback.track() else {
             self.timing.reset();
             return Shown::Off;
         };
-        // a paused status stays up, but without the timestamps, so nothing keeps counting
+        // a paused status stays up when enabled, but without the timestamps, so nothing keeps counting
         let playing = playback.wants_playing();
 
         let since = self.timing.listening_since();
         let settings = self.settings.read(cx);
-        if !settings.discord_presence() {
+        if !settings.discord_presence() || !playing && !settings.discord_show_paused() {
             return Shown::Off;
         }
 
@@ -169,13 +229,25 @@ impl Discord {
             badge: settings.discord_badge().then(|| provider.slug()),
             listening: match settings.discord_name() {
                 DiscordName::Sonora => None,
-                DiscordName::Provider => Some(provider.listening_to()),
-                DiscordName::Music => Some(MUSIC),
+                DiscordName::Provider => Some(provider.listening_to().to_owned()),
+                DiscordName::Music => Some(MUSIC.to_owned()),
+                DiscordName::Title => fit_text(&track.name).or_else(|| Some(MUSIC.to_owned())),
+                DiscordName::Artist => fit_text(&track.artists).or_else(|| Some(MUSIC.to_owned())),
+                DiscordName::ArtistTitle => {
+                    let artists = track.artists.trim();
+                    let title = track.name.trim();
+                    fit_text(&match (artists.is_empty(), title.is_empty()) {
+                        (false, false) => format!("{artists} - {title}"),
+                        (false, true) => artists.to_owned(),
+                        (true, false) => title.to_owned(),
+                        (true, true) => MUSIC.to_owned(),
+                    })
+                }
             },
             name: provider.name(),
         });
         if settings.discord_without_details() {
-            return Shown::On(Presence {
+            return Shown::On(Box::new(Presence {
                 source: named,
                 details: anonymous_details(),
                 state: None,
@@ -183,7 +255,8 @@ impl Discord {
                 image_text: None,
                 started_at: playing.then_some(since),
                 ends_at: None,
-            });
+                buttons: buttons(settings, session, None),
+            }));
         }
 
         let started_at = playing.then(|| {
@@ -192,33 +265,56 @@ impl Discord {
         });
         let duration = track.duration.as_secs() as i64;
         let public_art = provider.is_some_and(|provider| provider.public_art());
-        Shown::On(Presence {
+        let lookup = !track.id.as_deref().is_some_and(music::is_local_id)
+            || settings.artwork_for_local_files();
+        Shown::On(Box::new(Presence {
             source: named,
             details: fit_text(&track.name).unwrap_or_else(anonymous_details),
             state: fit_text(&track.artists),
-            image: self.artwork(track, public_art, cx),
+            image: self.artwork(track, public_art, lookup, cx),
             image_text: fit_text(&track.album),
             started_at,
             ends_at: started_at
                 .filter(|_| duration > 0)
                 .map(|started_at| started_at.saturating_add(duration)),
-        })
+            buttons: buttons(settings, session, provider.zip(track.id.as_deref())),
+        }))
     }
 
-    /// Cover art for the track, but only from a provider whose art is public. Discord fetches
-    /// the image through its own proxy, so a path on disk is unreachable and a self-hosted url
-    /// would hand over the credentials that fetch it.
-    fn artwork(&self, track: &Track, public_art: bool, cx: &App) -> Option<String> {
-        if !public_art {
-            return None;
+    /// Cover art for the track. The provider's own art is used only when it is public, since
+    /// Discord fetches the image through its own proxy, so a path on disk is unreachable and a
+    /// self-hosted url would hand over the credentials that fetch it. Without it, and when
+    /// `lookup` allows, the cover is one found by name, and a search not yet made is left in
+    /// `wanted` for `look_up`.
+    fn artwork(
+        &mut self,
+        track: &Track,
+        public_art: bool,
+        lookup: bool,
+        cx: &App,
+    ) -> Option<String> {
+        let own = public_art
+            .then(|| {
+                track
+                    .album_id
+                    .as_deref()
+                    .and_then(|album| self.cover.read(cx).large_for(album))
+                    .map(str::to_owned)
+                    .or_else(|| track.cover.clone())
+                    .filter(|cover| cover.starts_with("https://"))
+            })
+            .flatten();
+        if own.is_some() || !lookup {
+            return own;
         }
-        let album = track.album_id.as_deref()?;
-        self.cover
-            .read(cx)
-            .large_for(album)
-            .map(str::to_owned)
-            .or_else(|| track.cover.clone())
-            .filter(|cover| cover.starts_with("https://"))
+        let query = ArtworkQuery::for_track(track)?;
+        match self.found.get(&query) {
+            Some(found) => found.clone(),
+            None => {
+                self.wanted = Some(query);
+                None
+            }
+        }
     }
 }
 
@@ -283,7 +379,7 @@ async fn next_presence(receiver: &mut watch::Receiver<Shown>, shown: &Shown) -> 
             receiver.changed().await.ok()?;
             continue;
         }
-        if !matches!((shown, &wanted), (Shown::On(_), Shown::On(_))) {
+        if matches!(wanted, Shown::Off) {
             return Some(wanted);
         }
 
@@ -354,7 +450,11 @@ fn activity(shown: &Shown) -> Option<activity::Activity<'_>> {
     let mut activity = activity::Activity::new()
         .activity_type(activity::ActivityType::Listening)
         .details(presence.details.as_str());
-    if let Some(listening) = presence.source.and_then(|source| source.listening) {
+    if let Some(listening) = presence
+        .source
+        .as_ref()
+        .and_then(|source| source.listening.as_deref())
+    {
         activity = activity.name(listening);
     }
     if let Some(state) = presence.state.as_deref() {
@@ -362,6 +462,13 @@ fn activity(shown: &Shown) -> Option<activity::Activity<'_>> {
     }
     if let Some(assets) = assets(presence) {
         activity = activity.assets(assets);
+    }
+    if let Some(buttons) = presence.buttons.as_deref() {
+        let buttons = buttons
+            .iter()
+            .map(|button| activity::Button::new(button.label.as_str(), button.url.as_str()))
+            .collect();
+        activity = activity.buttons(buttons);
     }
 
     let Some(started_at) = presence.started_at else {
@@ -381,6 +488,7 @@ fn assets(presence: &Presence) -> Option<activity::Assets<'_>> {
     let text = presence.image_text.as_deref();
     let badge = presence
         .source
+        .as_ref()
         .and_then(|source| source.badge.map(|key| (key, source.name)));
     if image.is_none() && text.is_none() && badge.is_none() {
         return None;
@@ -399,9 +507,40 @@ fn assets(presence: &Presence) -> Option<activity::Assets<'_>> {
     Some(assets)
 }
 
+/// The buttons the settings ask for, or nothing when there are none. The provider button links
+/// the track itself, so `track` is `None` when the details are hidden and the link would give
+/// them away, and a provider without a public page for the track gets no button either.
+fn buttons(
+    settings: &AppSettings,
+    session: &Session,
+    track: Option<(&dyn MusicProvider, &str)>,
+) -> Option<Vec<Button>> {
+    let mut buttons = Vec::new();
+    if settings.discord_provider_button()
+        && let Some((provider, id)) = track
+        && let shelf = Shelf::of(id)
+        && !matches!(shelf, Shelf::Local)
+        && let Some(url) = session
+            .client_of(shelf)
+            .and_then(|client| client.share_url(MediaKind::Track, id))
+    {
+        buttons.push(Button {
+            label: format!("Listen on {}", provider.name()).to_string(),
+            url,
+        });
+    }
+    if settings.discord_sonora_button() {
+        buttons.push(Button {
+            label: "Get Sonora".to_string(),
+            url: SONORA_URL.to_string(),
+        });
+    }
+    (!buttons.is_empty()).then_some(buttons)
+}
+
 /// What the status says when the track is deliberately left out of it.
 fn anonymous_details() -> String {
-    let text = t!("discord-listening").to_string();
+    let text = "Listening to music".to_string();
     fit_text(&text).unwrap_or(text)
 }
 

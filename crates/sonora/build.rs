@@ -23,9 +23,7 @@ fn main() {
 }
 
 fn fonts() {
-    let assets = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo names the crate"))
-        .join("../../assets/fonts");
-    let assets = assets.canonicalize().expect("cannot find assets/fonts");
+    let assets = workspace().join("assets/fonts");
 
     let faces = embed::folder(&assets, "ttf");
     let embedded = embed::embedded(&faces, |item| format!("fonts/{}.ttf", item.name));
@@ -34,4 +32,15 @@ fn fonts() {
     let out = PathBuf::from(env::var("OUT_DIR").expect("cargo sets the output")).join("fonts.rs");
     fs::write(&out, source).expect("cannot write the font registry");
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// The workspace root, taken from the crate's own manifest directory without touching the
+/// filesystem, since `canonicalize` fails on a shared drive inside a Windows VM.
+fn workspace() -> PathBuf {
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo names the crate"));
+    manifest
+        .ancestors()
+        .nth(2)
+        .expect("the crate lives two levels under the workspace")
+        .to_path_buf()
 }

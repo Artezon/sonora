@@ -237,7 +237,7 @@ impl TagEditor {
     }
 
     fn bar(&self, cx: &Context<Self>) -> TabBar {
-        TabBar::new().items(Sheet::ALL.map(|sheet| {
+        TabBar::new("tag-editor-sheets").items(Sheet::ALL.map(|sheet| {
             Button::new(sheet.key())
                 .label(i18n::lookup(sheet.key(), None))
                 .small()

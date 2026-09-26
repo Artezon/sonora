@@ -127,6 +127,7 @@ impl Screen {
     }
 }
 
+/// One category of the settings page. The page shows one at a time, in this order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsTab {
     General,
@@ -135,6 +136,52 @@ pub enum SettingsTab {
     Privacy,
     Integrations,
     About,
+}
+
+impl SettingsTab {
+    pub const ALL: [Self; 6] = [
+        Self::General,
+        Self::Appearance,
+        Self::Playback,
+        Self::Privacy,
+        Self::Integrations,
+        Self::About,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Appearance => "appearance",
+            Self::Playback => "playback",
+            Self::Privacy => "privacy",
+            Self::Integrations => "integrations",
+            Self::About => "about",
+        }
+    }
+
+    /// The Fluent key of the category's name.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::General => "settings-tab-general",
+            Self::Appearance => "settings-tab-appearance",
+            Self::Playback => "settings-tab-playback",
+            Self::Privacy => "settings-tab-privacy",
+            Self::Integrations => "settings-tab-integrations",
+            Self::About => "settings-tab-about",
+        }
+    }
+
+    /// The icon shown before the category's name in the category bar.
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::General => "icons/settings.svg",
+            Self::Appearance => "icons/palette.svg",
+            Self::Playback => "icons/play.svg",
+            Self::Privacy => "icons/lock.svg",
+            Self::Integrations => "icons/link.svg",
+            Self::About => "icons/info.svg",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

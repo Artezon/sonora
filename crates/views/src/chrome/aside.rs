@@ -4,16 +4,16 @@ use gpui::prelude::*;
 
 use gpui::{
     Animation, AnimationExt as _, App, Bounds, Context, Div, DragMoveEvent, Entity, FontWeight,
-    MouseDownEvent, Pixels, Point, Render, ScrollHandle, ScrollStrategy, ScrollWheelEvent,
-    SharedString, SpringConfig, SpringState, Task, UniformListScrollHandle, Window, div,
-    ease_in_out, px, relative, svg, uniform_list,
+    MouseDownEvent, Pixels, Point, Render, ScrollHandle, ScrollStrategy, SharedString,
+    SpringConfig, SpringState, Task, UniformListScrollHandle, Window, div, ease_in_out, px,
+    relative, svg, uniform_list,
 };
 use i18n::t;
-use music::{Track, Voice};
+use music::{Shape, Track, Voice};
 use router::{Destination, LibraryTab, Link as _};
 use state::{
-    AppSettings, Lyrics, LyricsState, Playback, PlaybackState, Queue, RomanizationScripts, SideTab,
-    Sonora, Whence,
+    AppSettings, Lyrics, LyricsState, Network, Playback, PlaybackState, Queue, RomanizationScripts,
+    Shelf, SideTab, Sonora, Whence,
 };
 use ui::{
     ActiveTheme as _, Button, Card, DraggedPin, Edge, Motion, Motioned as _, Pin, Pinnable as _,
@@ -103,10 +103,14 @@ enum Slot {
     Track(QueuePosition),
 }
 
+/// The row counts the queue list is built from. `manual` is how many of the `upcoming` tracks
+/// the user queued by hand. They open the list under their own header, and the rest of the
+/// source follows under Up next, both indexed into the same upcoming list.
 #[derive(Clone, Copy)]
 struct Sections {
     past: usize,
     current: bool,
+    manual: usize,
     upcoming: usize,
     similar: usize,
 }
@@ -123,9 +127,17 @@ impl Sections {
         self.past_end() + 2 * usize::from(self.current)
     }
 
-    fn upcoming_end(self) -> usize {
+    fn manual_end(self) -> usize {
         self.current_end()
-            + match self.upcoming {
+            + match self.manual {
+                0 => 0,
+                count => count + 1,
+            }
+    }
+
+    fn upcoming_end(self) -> usize {
+        self.manual_end()
+            + match self.upcoming - self.manual {
                 0 => 0,
                 count => count + 1,
             }
@@ -156,10 +168,18 @@ impl Sections {
                 false => Slot::Track(QueuePosition::Current),
             };
         }
-        if index < self.upcoming_end() {
+        if index < self.manual_end() {
             return match index == self.current_end() {
-                true => Slot::Header("queue-up-next"),
+                true => Slot::Header("queue-next-in-queue"),
                 false => Slot::Track(QueuePosition::Upcoming(index - self.current_end() - 1)),
+            };
+        }
+        if index < self.upcoming_end() {
+            return match index == self.manual_end() {
+                true => Slot::Header("queue-up-next"),
+                false => Slot::Track(QueuePosition::Upcoming(
+                    self.manual + index - self.manual_end() - 1,
+                )),
             };
         }
         match index == self.upcoming_end() {
@@ -342,7 +362,7 @@ impl Aside {
             verse_take: 0,
             placing: false,
             context_menu: None,
-            track_menu: ItemMenu::new(playlist_scrollbar),
+            track_menu: ItemMenu::new(playlist_scrollbar, cx),
             drop_gap: None,
             scroll,
             scrollbar,
@@ -389,6 +409,15 @@ impl Aside {
 
     pub(crate) fn tab(&self) -> SideTab {
         self.tab
+    }
+
+    /// Whether the pointer is parked on the panel's scrollbar. Fullscreen
+    /// reads this to keep its chrome awake while the reader holds it.
+    pub(crate) fn scrollbar_active(&self, cx: &App) -> bool {
+        match self.tab {
+            SideTab::Lyrics => self.verse_bar.read(cx).hovered(),
+            SideTab::Queue => self.scrollbar.read(cx).hovered(),
+        }
     }
 
     pub(crate) fn show(&mut self, tab: SideTab, cx: &mut Context<Self>) {
@@ -835,20 +864,27 @@ impl Aside {
                         .flex()
                         .items_center()
                         .gap_1()
-                        .child(
-                            Button::new("toggle-radio")
-                                .ghost()
-                                .small()
-                                .icon("icons/radio.svg")
-                                .tooltip("queue-radio")
-                                .tint(match self.playback.read(cx).radio() {
-                                    true => theme.primary,
-                                    false => theme.muted_foreground,
-                                })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.playback
-                                        .update(cx, |playback, cx| playback.toggle_radio(cx));
-                                })),
+                        // Only where a station exists to keep the queue going.
+                        .when(
+                            Sonora::global(cx).session.read(cx).capabilities().radio,
+                            |this| {
+                                this.child(
+                                    Button::new("toggle-radio")
+                                        .ghost()
+                                        .small()
+                                        .icon("icons/radio.svg")
+                                        .tooltip("queue-radio")
+                                        .tint(match self.playback.read(cx).radio() {
+                                            true => theme.primary,
+                                            false => theme.muted_foreground,
+                                        })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.playback.update(cx, |playback, cx| {
+                                                playback.toggle_radio(cx)
+                                            });
+                                        })),
+                                )
+                            },
                         )
                         .child(
                             Button::new("reset-queue")
@@ -884,6 +920,7 @@ impl Aside {
         Some(
             self.raised(ui::perched(
                 Button::new("resume-pin")
+                    .secondary()
                     .icon("icons/undo-2.svg")
                     .tooltip("lyrics-follow")
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -895,13 +932,20 @@ impl Aside {
         )
     }
 
-    /// The trip back to the top of the queue, once it has scrolled far enough to want one.
-    fn recall(&self, cx: &mut Context<Self>) -> Option<Div> {
+    /// The trip back to the now-playing row, or to the top while nothing is playing, once the
+    /// queue has drifted far enough from it to want one.
+    fn recall(&self, sections: Sections, window: &Window, cx: &mut Context<Self>) -> Option<Div> {
         if self.tab != SideTab::Queue {
             return None;
         }
+        let goal = self.resting_offset(sections, window, cx)?;
+        let tooltip = match sections.current {
+            true => "queue-return-playing",
+            false => "nav-return-top",
+        };
+        let perch = ui::return_to("queue-return-top", &self.scrollbar, goal, tooltip, cx)?;
 
-        Some(self.raised(ui::return_top("queue-return-top", &self.scrollbar, cx)?))
+        Some(self.raised(perch))
     }
 
     /// Lifts a floating control clear of the transport a stripped aside leaves underneath it.
@@ -1401,7 +1445,12 @@ impl Aside {
             (None, LyricsState::Missing) => {
                 vec![wordless("lyrics-missing", "icons/mic-off.svg")]
             }
-            (None, LyricsState::Failed(_)) => vec![empty("lyrics-failed", cx)],
+            (None, LyricsState::Failed(reason)) => {
+                match Network::lost(cx) || music::trouble::offline(reason) {
+                    true => vec![wordless("trouble-offline", "icons/wifi-off.svg")],
+                    false => vec![empty("lyrics-failed", cx)],
+                }
+            }
         };
 
         if state == LyricsState::Ready
@@ -1423,7 +1472,10 @@ impl Aside {
                 .flex_col()
                 .text_size(theme.text(Text::Small))
                 .text_color(theme.muted_foreground)
-                .child(t!("lyrics-source", source = *source))
+                .child(match *source == music::lyrics::LOCAL {
+                    true => t!("lyrics-source-local"),
+                    false => t!("lyrics-source", source = *source),
+                })
                 .when(!writers.is_empty(), |this| {
                     let writers = writers.join(", ");
                     this.child(t!("lyrics-writers", writers = writers.as_str()))
@@ -1583,11 +1635,34 @@ impl Aside {
             return;
         }
 
-        let row = snapped(cx.theme().metrics.list_row, window);
-        let above = (viewport * PINNED_SHARE / row).round() as usize;
+        let above = Self::rows_above(viewport, window, cx);
         self.scroll
             .scroll_to_item_strict_with_offset(index, ScrollStrategy::Top, above);
         self.anchor = false;
+    }
+
+    /// How many rows `pin` keeps above the now-playing one, so it sits a quarter of the way down.
+    fn rows_above(viewport: Pixels, window: &Window, cx: &App) -> usize {
+        let row = snapped(cx.theme().metrics.list_row, window);
+        (viewport * PINNED_SHARE / row).round() as usize
+    }
+
+    /// Where the queue rests once `pin` has placed the now-playing row, in scrolled pixels,
+    /// clamped the way gpui clamps the deferred scroll. Zero while nothing is playing, so a
+    /// recall falls back to the top, and None before the list has been laid out.
+    fn resting_offset(&self, sections: Sections, window: &Window, cx: &App) -> Option<Pixels> {
+        let handle = self.scroll.0.borrow().base_handle.clone();
+        let viewport = handle.bounds().size.height;
+        if viewport <= px(0.) {
+            return None;
+        }
+        let Some(index) = sections.current_index() else {
+            return Some(Pixels::ZERO);
+        };
+        let row = snapped(cx.theme().metrics.list_row, window);
+        let above = Self::rows_above(viewport, window, cx);
+        let goal = row * index.saturating_sub(above) as f32;
+        Some(goal.clamp(Pixels::ZERO, handle.max_offset().y))
     }
 
     // unnamed origins stay unlabelled
@@ -1603,7 +1678,10 @@ impl Aside {
             Whence::Local => Destination::Local(LibraryTab::Songs),
         };
         let name = match origin.whence {
-            Whence::Saved => t!("library-liked-songs"),
+            Whence::Saved => match Sonora::global(cx).library.read(cx).shape(Shelf::Streaming) {
+                Shape::Saved => t!("library-liked-songs"),
+                Shape::Catalog => t!("nav-songs"),
+            },
             Whence::Local => t!("nav-local"),
             _ => origin.name.clone()?,
         };
@@ -1692,6 +1770,7 @@ impl Render for Aside {
         let sections = Sections {
             past: queue.past().len(),
             current: queue.current().is_some(),
+            manual: queue.manual().len(),
             upcoming: queue.upcoming().len(),
             similar: queue.similar().len(),
         };
@@ -1747,41 +1826,20 @@ impl Render for Aside {
                         this.child(vacant(t!("queue-empty"), cx).flex_1())
                     })
                     .when(self.tab == SideTab::Queue && !empty, |this| {
-                        let gliding = self.scrollbar.clone();
-
                         this.child(
-                            div()
-                                .relative()
-                                .flex_1()
-                                .min_h_0()
+                            Scroller::listing("queue-rows", &self.scrollbar)
+                                .when(effects(), |this| this.fade_edges(px(FADE * 0.5), px(FADE)))
                                 .child(
-                                    div()
-                                        .size_full()
-                                        .when(effects(), |this| {
-                                            this.fade_edges(px(FADE * 0.5), px(FADE))
-                                        })
-                                        .child(
-                                            self.rows(sections, cx)
-                                                .px_2()
-                                                .pt(px(FADE * 0.5))
-                                                .track_scroll(&self.scroll)
-                                                .size_full()
-                                                .on_scroll_wheel(
-                                                    move |event: &ScrollWheelEvent, window, cx| {
-                                                        if event.delta.precise() {
-                                                            return;
-                                                        }
-                                                        gliding
-                                                            .update(cx, |bar, _| bar.nudge(window));
-                                                    },
-                                                ),
-                                        ),
-                                )
-                                .child(self.scrollbar.clone()),
+                                    self.rows(sections, cx)
+                                        .px_2()
+                                        .pt(px(FADE * 0.5))
+                                        .track_scroll(&self.scroll)
+                                        .size_full(),
+                                ),
                         )
                     })
                     .children(self.follow(cx))
-                    .children(self.recall(cx)),
+                    .children(self.recall(sections, window, cx)),
             )
             .children(self.menu(cx))
     }
@@ -2752,6 +2810,7 @@ mod tests {
             past: 2,
             current: true,
             upcoming: 2,
+            manual: 0,
             similar: 2,
         };
 
@@ -2780,6 +2839,7 @@ mod tests {
             past: 0,
             current: true,
             upcoming: 0,
+            manual: 0,
             similar: 1,
         };
 
@@ -2800,6 +2860,7 @@ mod tests {
             past: 0,
             current: true,
             upcoming: 1,
+            manual: 0,
             similar: 0,
         };
 
@@ -2821,6 +2882,7 @@ mod tests {
             past: 1,
             current: false,
             upcoming: 0,
+            manual: 0,
             similar: 0,
         };
 
@@ -2840,6 +2902,7 @@ mod tests {
             past: 0,
             current: false,
             upcoming: 0,
+            manual: 0,
             similar: 0,
         };
 

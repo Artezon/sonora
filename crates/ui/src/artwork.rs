@@ -1,4 +1,5 @@
 use crate::metrics::snapped;
+use crate::palette::{CoverPalette, of_image};
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
 use futures::AsyncReadExt as _;
@@ -22,9 +23,13 @@ const FILE_PREFIX: &str = "file://";
 
 const FALLBACK_ICON: &str = "icons/music.svg";
 pub(crate) const ROUNDED: Pixels = px(4.);
+/// What the cache trims back to. It is allowed past this while a scroll pulls covers
+/// in, and only trims once it crosses `CACHE_CEILING`, since a trim asks every window
+/// to redraw and is worth doing in one batch rather than a cover at a time.
 const CACHE_BYTES: usize = 32 * 1024 * 1024;
+/// How far past the budget the cache runs before it trims.
+const CACHE_CEILING: usize = 48 * 1024 * 1024;
 const CACHE_ITEMS: usize = 256;
-const HARD_BYTES: usize = 192 * 1024 * 1024;
 const MAX_SAMPLE_EDGE: u32 = 1024;
 const GRACE: Duration = Duration::from_secs(5);
 const KEEP_ITEMS: usize = 96;
@@ -36,6 +41,14 @@ const SOFT_SIGMA: f32 = 1.6;
 const SMALL_BYTES: usize = 64 * 1024;
 const BIG_BYTES: usize = 256 * 1024;
 const MAX_PENDING: usize = 8;
+/// How long a condemned cover is held before it is dropped. One redraw of every window
+/// is all it takes for anything still on screen to ask for its cover again, and that
+/// redraw is already on its way when the batch is condemned.
+const REPRIEVE: Duration = Duration::from_millis(250);
+/// How many cover palettes are kept. Each one is two colours, so the map costs
+/// nothing beside the frames, and holding them past an eviction is what keeps a
+/// button its colour while its cover is decoded again.
+const TINT_ITEMS: usize = 4096;
 
 type ArtworkKey = (Resource, u32);
 
@@ -208,7 +221,7 @@ fn artwork_frame(mut image: RgbaImage, edge: u32) -> RgbaImage {
 }
 
 fn bgra(image: &mut RgbaImage) {
-    for pixel in image.chunks_exact_mut(4) {
+    for pixel in image.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
 }
@@ -221,8 +234,16 @@ struct Cached {
 
 struct ArtworkCache {
     items: HashMap<ArtworkKey, Cached>,
+    /// Covers taken out of `items` and kept alive until the windows have redrawn once. See
+    /// `condemn`.
+    condemned: HashMap<ArtworkKey, Cached>,
+    condemned_soft: Vec<Arc<RenderImage>>,
+    condemned_at: Option<Instant>,
     pending: HashMap<ArtworkKey, Instant>,
     soft: HashMap<(Resource, u32), Arc<RenderImage>>,
+    /// The palette of every cover decoded this run, kept apart from the frames
+    /// so an eviction never costs a button its colour.
+    tints: HashMap<Resource, CoverPalette>,
     bytes: usize,
     _sweep: Task<()>,
 }
@@ -236,8 +257,12 @@ impl ArtworkCache {
         if cx.try_global::<Installed>().is_none() {
             let cache = cx.new(|cx| Self {
                 items: HashMap::new(),
+                condemned: HashMap::new(),
+                condemned_soft: Vec::new(),
+                condemned_at: None,
                 pending: HashMap::new(),
                 soft: HashMap::new(),
+                tints: HashMap::new(),
                 bytes: 0,
                 _sweep: sweeper(cx),
             });
@@ -250,10 +275,16 @@ impl ArtworkCache {
         &mut self,
         resource: ArtworkKey,
         value: Result<Arc<RenderImage>, ImageCacheError>,
-        window: &mut Window,
         cx: &mut App,
     ) {
         let bytes = value.as_ref().map_or(0, |image| image_bytes(image));
+        if let Ok(image) = &value
+            && !self.tints.contains_key(&resource.0)
+        {
+            let palette = of_image(image);
+            self.trim_tints();
+            self.tints.insert(resource.0.clone(), palette);
+        }
         self.bytes = self.bytes.saturating_add(bytes);
         self.items.insert(
             resource,
@@ -264,19 +295,18 @@ impl ArtworkCache {
             },
         );
 
-        while self.items.len() > 1 {
-            let forced = self.bytes > HARD_BYTES;
-            if !forced && self.bytes <= CACHE_BYTES && self.items.len() <= CACHE_ITEMS {
-                break;
-            }
-            let Some((resource, used)) = self.oldest() else {
-                break;
-            };
-            if !forced && used.elapsed() < GRACE {
-                break;
-            }
-            self.evict(&resource, Some(&mut *window), cx);
+        self.trim(cx);
+    }
+
+    /// Drops the palettes of covers no longer held, once the map has grown past
+    /// its cap. Scrolling through more art than that pays one pass.
+    fn trim_tints(&mut self) {
+        if self.tints.len() < TINT_ITEMS {
+            return;
         }
+        let live = &self.items;
+        self.tints
+            .retain(|resource, _| live.keys().any(|key| &key.0 == resource));
     }
 
     fn oldest(&self) -> Option<(ArtworkKey, Instant)> {
@@ -286,19 +316,60 @@ impl ArtworkCache {
             .map(|(resource, cached)| (resource.clone(), cached.used))
     }
 
-    fn evict(&mut self, resource: &ArtworkKey, window: Option<&mut Window>, cx: &mut App) {
+    /// Takes a cover out of the cache without dropping it. Dropping one frees its tile in
+    /// the GPU atlas, and a view whose layout was cached redraws from the primitives it
+    /// recorded last frame, so a cover still shown there would be painted with whatever art
+    /// took its tile over. A condemned cover keeps its frames until `flush`, and `load_at`
+    /// takes it back the moment anything asks for it again.
+    fn condemn(&mut self, resource: &ArtworkKey) {
         let Some(cached) = self.items.remove(resource) else {
             return;
         };
         self.bytes = self.bytes.saturating_sub(cached.bytes);
-        cx.remove_asset::<ArtworkResourceLoader>(&ArtworkSource {
-            resource: resource.0.clone(),
-            edge: resource.1,
-        });
-        if let Ok(image) = cached.value {
-            cx.drop_image(image, window);
+        self.condemned.insert(resource.clone(), cached);
+    }
+
+    /// Condemns the least recently drawn covers until the cache is back inside its budget,
+    /// then asks every window to redraw. The redraw is what makes the condemned batch safe
+    /// to drop: it rebuilds every cached view, so nothing is replayed from last frame's
+    /// primitives and everything still on screen asks for its cover again.
+    fn trim(&mut self, cx: &mut App) {
+        if self.bytes <= CACHE_CEILING && self.items.len() <= CACHE_ITEMS {
+            return;
         }
-        self.release_bytes_if_unused(&resource.0, cx);
+        let before = self.condemned.len();
+        while self.items.len() > 1 && (self.bytes > CACHE_BYTES || self.items.len() > CACHE_ITEMS) {
+            let Some((resource, _)) = self.oldest() else {
+                break;
+            };
+            self.condemn(&resource);
+        }
+        if self.condemned.len() > before {
+            self.condemned_at = Some(Instant::now());
+            cx.refresh_windows();
+        }
+    }
+
+    /// Drops every cover still condemned once the redraw that `trim` asked for has been and
+    /// gone. Whatever is left here was on no screen through a full rebuild of every view.
+    fn flush(&mut self, cx: &mut App) {
+        if self.condemned_at.is_none_or(|at| at.elapsed() < REPRIEVE) {
+            return;
+        }
+        self.condemned_at = None;
+        for (resource, cached) in std::mem::take(&mut self.condemned) {
+            cx.remove_asset::<ArtworkResourceLoader>(&ArtworkSource {
+                resource: resource.0.clone(),
+                edge: resource.1,
+            });
+            if let Ok(image) = cached.value {
+                cx.drop_image(image, None);
+            }
+            self.release_bytes_if_unused(&resource.0, cx);
+        }
+        for image in std::mem::take(&mut self.condemned_soft) {
+            cx.drop_image(image, None);
+        }
     }
 
     fn release_bytes_if_unused(&self, resource: &Resource, cx: &mut App) {
@@ -322,7 +393,6 @@ impl ArtworkCache {
         edge: u32,
         soft: bool,
         image: Arc<RenderImage>,
-        window: &mut Window,
         cx: &mut App,
     ) -> Arc<RenderImage> {
         if !soft {
@@ -334,9 +404,10 @@ impl ArtworkCache {
             return found.clone();
         }
         if self.soft.len() >= SOFT_ITEMS {
-            for image in self.soft.drain().map(|(_, image)| image) {
-                cx.drop_image(image, Some(&mut *window));
-            }
+            self.condemned_soft
+                .extend(self.soft.drain().map(|(_, image)| image));
+            self.condemned_at = Some(Instant::now());
+            cx.refresh_windows();
         }
         let Some(softened) = blurred(&image) else {
             return image;
@@ -390,7 +461,11 @@ impl ArtworkCache {
         }
 
         for resource in &stale {
-            self.evict(resource, None, cx);
+            self.condemn(resource);
+        }
+        if !stale.is_empty() {
+            self.condemned_at = Some(Instant::now());
+            cx.refresh_windows();
         }
 
         let tiny = self.count(..SMALL_BYTES);
@@ -415,12 +490,26 @@ impl ArtworkCache {
     }
 }
 
+/// Releases condemned covers as their reprieve runs out and sweeps the cache on its own
+/// slower clock. The two share one timer because a tick that finds nothing to release costs
+/// a look at an empty map.
 fn sweeper(cx: &mut Context<ArtworkCache>) -> Task<()> {
     cx.spawn(async move |this, cx| {
+        let mut swept = Instant::now();
         loop {
-            cx.background_executor().timer(SWEEP).await;
-            if this.update(cx, |this, cx| this.sweep(cx)).is_err() {
+            cx.background_executor().timer(REPRIEVE).await;
+            let due = swept.elapsed() >= SWEEP;
+            let alive = this.update(cx, |this, cx| {
+                this.flush(cx);
+                if due {
+                    this.sweep(cx);
+                }
+            });
+            if alive.is_err() {
                 return;
+            }
+            if due {
+                swept = Instant::now();
             }
         }
     })
@@ -449,7 +538,7 @@ impl ArtworkCache {
                 continue;
             };
             self.pending.remove(&key);
-            self.insert(key, value, window, cx);
+            self.insert(key, value, cx);
         }
     }
 
@@ -464,6 +553,14 @@ impl ArtworkCache {
         if let Some(cached) = self.items.get_mut(&key) {
             cached.used = Instant::now();
             return Some(cached.value.clone());
+        }
+        // Still on screen after all, so it goes back in the cache rather than being dropped.
+        if let Some(mut cached) = self.condemned.remove(&key) {
+            cached.used = Instant::now();
+            let value = cached.value.clone();
+            self.bytes = self.bytes.saturating_add(cached.bytes);
+            self.items.insert(key, cached);
+            return Some(value);
         }
 
         if !self.pending.contains_key(&key) && self.pending.len() >= MAX_PENDING {
@@ -483,7 +580,7 @@ impl ArtworkCache {
         };
 
         self.pending.remove(&key);
-        self.insert(key, value.clone(), window, cx);
+        self.insert(key, value.clone(), cx);
         Some(value)
     }
 }
@@ -527,6 +624,16 @@ pub(crate) fn resource(url: impl Into<SharedString>) -> Resource {
         Some(path) => Resource::Path(Arc::from(Path::new(path))),
         None => Resource::Uri(SharedUri::from(url)),
     }
+}
+
+/// The palette of a cover the artwork cache has already decoded, or none while
+/// it has not been drawn yet. Nothing is decoded here, so the colours land on
+/// the frame the cover appears and never before it.
+pub fn cover_palette(url: &str, cx: &App) -> Option<CoverPalette> {
+    let installed = cx.try_global::<Installed>()?;
+    let resource = resource(url.to_owned());
+
+    installed.0.read(cx).tints.get(&resource).copied()
 }
 
 pub fn artwork_usage(cx: &App) -> Option<(usize, usize)> {
@@ -697,7 +804,7 @@ impl RenderOnce for Artwork {
                             .update(cx, |cache, cx| cache.load_at(&resource, edge, window, cx))?
                             .map(|image| {
                                 cache.update(cx, |cache, cx| {
-                                    cache.prepare(&resource, edge, soft, image, window, cx)
+                                    cache.prepare(&resource, edge, soft, image, cx)
                                 })
                             });
                         Some(loaded)

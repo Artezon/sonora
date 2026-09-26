@@ -117,7 +117,6 @@ pub(crate) async fn saved_items(
     session: &Session,
     set: &str,
     prefix: &str,
-    limit: usize,
 ) -> Result<Vec<SavedItem>> {
     let username = session.username();
     let mut found = Vec::new();
@@ -140,12 +139,11 @@ pub(crate) async fn saved_items(
         );
 
         token = page.next;
-        if found.len() >= limit || token.is_empty() {
+        if token.is_empty() {
             break;
         }
     }
 
-    found.truncate(limit);
     Ok(found)
 }
 

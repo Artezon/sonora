@@ -122,6 +122,8 @@ menu-remove-tracks-from-history = { $count ->
     [one] Quitar { $count } pista del historial
    *[other] Quitar { $count } pistas del historial
 }
+menu-delete-track-file = Eliminar archivo de pista
+menu-delete-track-files = Eliminar { $count } archivos de pista
 menu-play-next = Reproducir a continuación
 menu-play-tracks-next = { $count ->
     [one] Reproducir { $count } pista a continuación
@@ -142,16 +144,22 @@ menu-copy = Copiar
 menu-paste = Pegar
 menu-select-all = Seleccionar todo
 menu-remove-from-queue = Quitar de la cola
-menu-open-playlist = Abrir lista de reproducción
-menu-play-playlist = Reproducir lista
 menu-rename-playlist = Renombrar lista
 menu-delete-playlist = Eliminar lista
 menu-add-playlist-to-library = Añadir a la biblioteca
 menu-remove-playlist-from-library = Quitar de la biblioteca
+menu-library-add = Añadir a la biblioteca
+menu-library-add-tracks = { $count ->
+    [one] Añadir { $count } pista a la biblioteca
+   *[other] Añadir { $count } pistas a la biblioteca
+}
+menu-library-remove = Quitar de la biblioteca
+menu-library-remove-tracks = { $count ->
+    [one] Quitar { $count } pista de la biblioteca
+   *[other] Quitar { $count } pistas de la biblioteca
+}
 menu-make-playlist-public = Hacer pública
 menu-make-playlist-private = Hacer privada
-menu-open-album = Abrir álbum
-menu-play-album = Reproducir álbum
 menu-play-artist = Reproducir artista
 
 # playlist editor
@@ -192,6 +200,8 @@ confirm-remove-playlists = { $count ->
     [one] ¿Quitar esta lista de tu biblioteca?
    *[other] ¿Quitar { $count } listas de tu biblioteca?
 }
+confirm-delete-track-files-title = ¿Eliminar los archivos de las pistas?
+confirm-delete-track-files = El archivo o los archivos se eliminarán del disco de forma permanente. Esta acción no se puede deshacer.
 
 # queue panel
 queue-title = Cola
@@ -204,6 +214,7 @@ queue-clear = Vaciar
 queue-empty = Tu cola está vacía
 queue-similar = Pistas similares
 queue-radio = Reproducir pistas similares automáticamente
+queue-return-playing = Volver a lo que suena
 
 # player bar
 player-nothing-playing = No se está reproduciendo nada
@@ -254,21 +265,30 @@ login-signed-in = Sesión iniciada como { $name }
 login-failed-title = No se pudo iniciar sesión
 login-problem-region = Spotify no abre una sesión desde el país en el que estás. Inicia sesión desde tu país de origen o cambia el país en tu cuenta de Spotify.
 login-problem-credentials = Tu sesión guardada de Spotify ya no es válida. Inicia sesión de nuevo para continuar.
-login-problem-network = Sonora no pudo conectarse con Spotify. Revisa tu conexión a internet e inténtalo de nuevo.
+login-problem-network = Sonora no pudo conectarse con el servicio de música. Revisa tu conexión a internet e inténtalo de nuevo.
 login-problem-cancelled = Cerraste la página del navegador antes de aprobar el inicio de sesión. Empieza de nuevo para terminar.
 login-problem-refused = Spotify rechazó el inicio de sesión. Espera un momento e inténtalo de nuevo.
 login-problem-premium = Sonora reproduce a través de Spotify Premium y esta cuenta no lo tiene. Inicia sesión con una cuenta Premium para continuar.
 login-sign-in = Iniciar sesión con { $provider }
 login-connect-cookies = Pegar las cookies manualmente
-login-cookie-open = Abre YouTube Music
+login-cookie-open = Abrir { $provider }
 login-cookie-submit = Continuar
 login-cookie-hint = Pega aquí el encabezado de solicitud Cookie
-login-cookie-step-1 = Abre music.youtube.com y comprueba que has iniciado sesión.
+login-cookie-step-1 = Abre music.youtube.com y comprueba que has iniciado sesión. Funciona mejor en una ventana de incógnito.
 login-cookie-step-2 = Pulsa F12, abre la pestaña Red y recarga la página.
 login-cookie-step-3 = Selecciona cualquier solicitud llamada "browse" o "next".
 login-cookie-step-4 = En Encabezados, busca Cookie dentro de los encabezados de solicitud, haz clic derecho y copia su valor.
 login-cookie-step-note = Pega el valor completo abajo: el panel de cookies de la solicitud no basta, porque el valor tiene que llevar SAPISID y __Secure-3PAPISID.
-login-cookie-title = Pega tus cookies de YouTube Music para terminar de iniciar sesión
+login-cookie-header-title = Pega las cookies de { $provider } para terminar de iniciar sesión
+login-cookie-apple-step-3 = Selecciona cualquier solicitud a { $site }.
+login-cookie-apple-note = Asegúrate de pegar el valor completo, incluido { $cookie }.
+login-cookie-named-title = Pega la cookie de { $provider } para terminar de iniciar sesión
+login-cookie-named-hint = Pega aquí el valor de la cookie
+login-cookie-named-step-1 = Abre { $site } y comprueba que has iniciado sesión.
+login-cookie-named-step-2 = Pulsa F12 y abre la pestaña Almacenamiento en Firefox, o la pestaña Aplicación en Chrome.
+login-cookie-named-step-3 = Despliega Cookies, selecciona { $site } y busca la cookie llamada { $cookie }.
+login-cookie-named-step-4 = Haz doble clic en su valor y cópialo.
+login-cookie-named-note = Basta con el valor de { $cookie }. También sirve un encabezado Cookie completo copiado desde la pestaña Red.
 login-window-title = Iniciar sesión en { $provider }
 login-use = Usar { $provider }
 login-guest-title = Modo invitado
@@ -340,8 +360,6 @@ release-meta = { $year } • { $kind }
 
 # home page
 home-quick-picks = Selección rápida
-home-listen-again = Escuchar de nuevo
-home-quick-picks-eyebrow = Empieza por una canción
 home-quick-picks-empty = Marca algunas canciones como favoritas y aparecerán aquí
 
 # search page
@@ -444,6 +462,7 @@ month-11 = nov.
 month-12 = dic.
 
 # settings
+settings-search = Buscar en los ajustes
 settings-tab-general = General
 settings-tab-appearance = Apariencia
 settings-tab-playback = Reproducción
@@ -459,6 +478,8 @@ settings-adaptive = Tema adaptativo
 settings-adaptive-detail = Tiñe la paleta con la portada del álbum en reproducción
 settings-visualizer = Visualizador
 settings-visualizer-detail = Muestra barras del espectro musical detrás de la portada
+settings-fullscreen-controls-autohide = Ocultar los controles en pantalla completa
+settings-fullscreen-controls-autohide-detail = Atenúa los controles de reproducción cuando la pantalla completa está inactiva
 settings-icons = Paquete de iconos
 settings-icons-detail = Elige el conjunto de iconos que usa la interfaz
 settings-motion = Reducir el movimiento
@@ -469,8 +490,10 @@ settings-saver = Ahorro de batería
 settings-saver-detail = Limita la tasa de fotogramas de las animaciones mientras Sonora no está en primer plano, a partir del próximo inicio
 settings-corners = Esquinas
 settings-corners-detail = Cuánto se redondean las superficies y los controles
-settings-blur = Desenfoque
-settings-blur-detail = Desenfoca lo que se ve detrás de la ventana. Solo funciona si la opacidad es menor al 100 %
+settings-blur = Desenfoque de la interfaz
+settings-blur-detail = Esmerilar los menús y los controles flotantes
+settings-blur-window = Desenfocar la ventana
+settings-blur-window-detail = Desenfoca lo que se ve detrás de la ventana. Solo funciona si la opacidad es menor al 100 %
 settings-font = Tamaño del texto
 settings-font-detail = Tamaño base del texto; todo lo demás se escala con él
 settings-font-value = { $size } px
@@ -500,8 +523,10 @@ settings-window-rounding = Esquinas de la ventana
 settings-window-rounding-detail = El grado de redondeo de las esquinas de la ventana
 settings-controls-side = Lado de los controles
 settings-controls-side-detail = El extremo de la barra de título donde se sitúan los controles
-settings-close-to-tray = Reproducir mientras esta en segundo plano
-settings-close-to-tray-detail = Mantiene a Sonora en segundo plano y continúa reproduciendo después de cerrar su ventana
+settings-close-to-tray = Mantener en segundo plano
+settings-close-to-tray-detail = Mantiene a Sonora en ejecución y reproduciendo después de cerrar su ventana
+settings-tray-icon = Mostrar en la bandeja del sistema
+settings-tray-icon-detail = Pone un icono con controles de reproducción en la bandeja del sistema
 settings-discord = Mostrar en Discord
 settings-discord-detail = Muestra la pista que estás escuchando en tu perfil de Discord
 settings-discord-name = Nombre del estado
@@ -509,11 +534,24 @@ settings-discord-name-detail = Cómo se llama el estado, después del Escuchando
 settings-discord-name-sonora = Sonora
 settings-discord-name-provider = Proveedor
 settings-discord-name-music = Música
+settings-discord-name-title = Título
+settings-discord-name-artist = Artista
+settings-discord-name-artist-title = Artista - Título
+settings-discord-show-paused = Mostrar en pausa
+settings-discord-show-paused-detail = Mantiene el estado en tu perfil de Discord mientras la pista está en pausa
 settings-discord-badge = Mostrar la insignia del proveedor
 settings-discord-badge-detail = Marca el estado con un icono pequeño del servicio del que viene la pista
 settings-discord-anonymous = Ocultar los detalles
 settings-discord-anonymous-detail = Dice solo que suena música, sin el título, el artista ni la portada
+settings-discord-buttons = Botones
+settings-discord-buttons-detail = Enlaces bajo el estado que tus amigos pueden abrir, uno a la pista en su servicio y otro a Sonora
+settings-discord-buttons-pick = Elegir botones
+# the Discord status when the track is left out of it
 discord-listening = Escuchando música
+get-sonora = Consigue Sonora
+settings-fullscreen-controls-autohide-automatic = Automático
+settings-fullscreen-controls-autohide-always-hidden = Siempre ocultos
+settings-fullscreen-controls-autohide-always-shown = Siempre visibles
 settings-normalisation = Normalizar el volumen
 settings-normalisation-detail = Mantiene las pistas a un volumen constante
 settings-gapless = Reproducción sin pausas
@@ -524,6 +562,50 @@ settings-sleep-configure = Configurar…
 settings-sleep-off = Desactivado
 settings-sleep-end-of-track = Fin de pista
 settings-sleep-minutes = { $count } min
+settings-widevine = Módulo Widevine
+settings-widevine-detail = Las pistas de Apple Music están cifradas y necesitan el módulo Widevine de Google. Sonora usa la copia que ya tiene un navegador de este equipo, o una que descargó de Google con tu consentimiento.
+settings-widevine-none = Las pistas de Apple Music están cifradas y necesitan el módulo Widevine de Google. Ningún navegador de este equipo lo tiene, así que Sonora puede descargarlo de Google con tu consentimiento.
+settings-widevine-looking = Buscando…
+settings-widevine-asking = Esperando tu respuesta
+settings-widevine-fetching = Descargando…
+settings-widevine-installing = Instalando…
+settings-widevine-installed = Encontrado en un navegador
+settings-widevine-fetched = Descargado de Google
+settings-widevine-missing = No instalado
+settings-widevine-configured = Definido por el entorno
+settings-widevine-fetch = Descargar
+settings-widevine-uninstall = Desinstalar
+confirm-uninstall-widevine-title = ¿Desinstalar el módulo Widevine?
+confirm-uninstall-widevine = Sonora eliminará la copia que descargó de Google. Las pistas de Apple Music dejarán de reproducirse hasta que se vuelva a descargar.
+widevine-prompt-title = Módulo Widevine
+widevine-prompt-wanted = Las pistas de Apple Music están cifradas y necesitan el módulo Widevine de Google. Ningún navegador de este equipo lo tiene. Sonora puede descargarlo de los servidores de Google, el mismo archivo que instala Chrome, y guardarlo en su propia carpeta.
+widevine-prompt-downloading = Descargando…
+widevine-prompt-terms = Se descargó la versión { $version }. Instalarlo implica aceptar los términos de Google para el módulo:
+widevine-prompt-installing = Instalando…
+widevine-prompt-download = Descargar
+widevine-prompt-later = Ahora no
+widevine-prompt-accept = Aceptar e instalar
+widevine-prompt-decline = Rechazar
+settings-equalizer = Ecualizador
+settings-equalizer-detail = Da forma al sonido en diez bandas, una por octava
+settings-equalizer-preset = Preajuste
+settings-equalizer-preset-detail = Una curva ya hecha para las bandas de abajo
+settings-equalizer-custom = Personalizado
+settings-equalizer-flat = Plano
+settings-equalizer-bass-boost = Más graves
+settings-equalizer-bass-reducer = Menos graves
+settings-equalizer-treble-boost = Más agudos
+settings-equalizer-vocal = Voz
+settings-equalizer-rock = Rock
+settings-equalizer-pop = Pop
+settings-equalizer-jazz = Jazz
+settings-equalizer-classical = Clásica
+settings-equalizer-electronic = Electrónica
+settings-equalizer-acoustic = Acústica
+settings-equalizer-loudness = Loudness
+settings-equalizer-decibels = { $db } dB
+settings-equalizer-hertz = { $hz } Hz
+settings-equalizer-kilohertz = { $khz } kHz
 settings-panel-lyrics-size = Tamaño del panel letra (panel)
 settings-panel-lyrics-size-detail = Tamaño del texto de la letra en el panel lateral comparado con el tamaño de fuente base
 settings-fullscreen-lyrics-size = Tamaño de la letra en pantalla completa
@@ -531,6 +613,22 @@ settings-fullscreen-lyrics-size-detail = Tamaño del texto de la letra en pantal
 settings-lyrics-size-value = { $size }%
 settings-lyrics-for-local-files = Letra para archivos locales
 settings-lyrics-for-local-files-detail = Usa metadatos de archivos locales para buscar letras en internet
+settings-prefer-local-lyrics = Preferir letras locales
+settings-prefer-local-lyrics-detail = Usa la letra guardada en las etiquetas del archivo local o en su archivo .lrc en lugar de buscarla en los demás proveedores
+settings-lyrics-providers = Proveedores de letra
+settings-lyrics-providers-detail = Elige en qué servicios buscar letra
+settings-lyrics-providers-selected = { $count ->
+    [one] { $count } seleccionado
+   *[other] { $count } seleccionados
+    }
+settings-lyrics-provider-local = Archivos locales
+settings-lyrics-provider-spotify = Spotify
+settings-lyrics-provider-youtube = YouTube Music
+settings-lyrics-provider-apple-music = Apple Music
+settings-lyrics-provider-musixmatch = Musixmatch
+settings-lyrics-provider-lrclib = LRCLIB
+settings-lyrics-provider-kugou = Kugou
+settings-lyrics-provider-netease = NetEase
 settings-karaoke-lyrics = Letra en karaoke
 settings-karaoke-lyrics-detail = Resalta la letra palabra por palabra cuando hay sincronización disponible
 settings-blur-lyrics = Desenfoque la letra inactiva
@@ -554,6 +652,7 @@ settings-group-motion = Movimiento
 settings-group-title-bar = Barra de título
 settings-group-window-style = Apariencia de la ventana
 settings-group-lyrics = Letra
+settings-group-equalizer = Ecualizador
 settings-group-discord = Discord
 settings-group-project = Proyecto
 settings-adaptive-menu = Menú contextual adaptativo
@@ -566,6 +665,28 @@ settings-provider-current = Reproduciendo desde este servicio
 settings-provider-guest = Reproduciendo como invitado
 settings-provider-switch = Cambiar a
 settings-sign-out = Cerrar sesión
+settings-group-scrobbling = Scrobbling
+settings-lastfm = Last.fm
+settings-lastfm-detail = Sonora hace scrobbling a través de tu propia cuenta de API de Last.fm. Crea una y pega aquí la clave y el secreto.
+settings-librefm = Libre.fm
+settings-listenbrainz = ListenBrainz
+settings-listenbrainz-detail = Pega un token de usuario desde la página de ajustes de tu cuenta de ListenBrainz.
+settings-maloja = Maloja
+settings-maloja-detail = Indícale a Sonora la dirección de tu servidor Maloja y pega una de sus claves de API.
+settings-scrobble-off = No conectado
+settings-scrobble-on = Conectado
+settings-scrobble-waiting = Esperando tu navegador…
+settings-scrobble-as = Scrobbling como { $name }
+settings-scrobble-failed = No se pudo conectar
+settings-scrobble-connect = Conectar
+settings-scrobble-disconnect = Desconectar
+settings-scrobble-title = Conectar { $service }
+settings-scrobble-request = Obtener una clave de API
+settings-scrobble-token-request = Obtener un token
+settings-scrobble-key = Clave de API
+settings-scrobble-secret = Secreto de API
+settings-scrobble-token = Token de usuario
+settings-scrobble-server = Dirección del servidor
 settings-local-folder = Carpeta de música importada
 settings-local-folder-empty = Sin configurar
 settings-choose-folder = Elegir carpeta…
@@ -620,6 +741,7 @@ saver-strong = Fuerte ({ $fps } FPS)
 toast-playlist-created = Lista creada
 toast-playlist-renamed = Lista renombrada
 toast-playlist-deleted = Lista eliminada
+toast-local-delete-failed = No se pudieron eliminar algunos archivos de pista
 toast-playlist-added = Lista añadida a tu biblioteca
 toast-playlist-removed = Lista quitada de tu biblioteca
 toast-playlist-visibility = Se cambió la visibilidad de la lista
@@ -642,6 +764,8 @@ toast-sign-in-to-play = { $name } solo se reproduce con la sesión iniciada
 toast-track-unplayable = No se pudo reproducir { $name }
 toast-library-add-failed = No se pudo añadir { $name } a tu biblioteca
 toast-library-remove-failed = No se pudo quitar { $name } de tu biblioteca
+toast-library-added = Añadido a tu biblioteca
+toast-library-removed = Quitado de tu biblioteca
 
 # lyrics
 lyrics-title = Letra
@@ -652,6 +776,7 @@ lyrics-instrumental = Esta canción es instrumental
 lyrics-failed = No se pudo conectar con el servicio de letras
 lyrics-follow = Volver a seguir la canción
 lyrics-source = Letra de { $source }
+lyrics-source-local = Letra del archivo
 lyrics-writers = Escrita por { $writers }
 
 update-available = Ya está disponible Sonora { $version }
@@ -664,6 +789,9 @@ update-working = Descargando la actualización…
 update-failed = No se pudo instalar la actualización. Inténtalo de nuevo desde la página de versiones.
 settings-check-updates = Buscar actualizaciones
 settings-check-updates-detail = Pregunta a GitHub una vez al iniciar si hay una versión más reciente. Sonora instala la actualización por su cuenta solo en Windows; en el resto te muestra qué ha cambiado
+settings-log = Archivo de registro
+settings-log-detail = Lo que Sonora escribió mientras se ejecutaba. Adjúntalo a un informe de error
+settings-log-open = Abrir el registro
 
 # tags
 tags-edit-title = Editar etiquetas
@@ -686,9 +814,9 @@ tags-isrc = ISRC
 tags-comment = Comentario
 toast-tags-saved = Se guardaron las etiquetas de { $name }
 toast-tags-failed = No se pudieron guardar las etiquetas
+toast-tray-unavailable = No hay ninguna bandeja del sistema donde poner el icono
 
 nav-pin = Fijar
-toast-library-pin-limit = Se alcanzó el límite de elementos fijados de Spotify. Deja de fijar otro para hacer espacio.
 toast-library-pin-failed = No se pudo actualizar el elemento fijado en Spotify.
 nav-nothing-pinned = No hay nada aquí
 nav-pins-alphabetical = Alfabético

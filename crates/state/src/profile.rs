@@ -104,12 +104,12 @@ impl Profile {
 
                 this.loading = false;
                 this.request = None;
-                match loaded {
+                match crate::settled(loaded, cx) {
                     Ok(user) => {
                         this.user = Some(Arc::new(user));
                         this.build_mosaics(cx);
                     }
-                    Err(error) => this.error = Some(format!("{error:#}")),
+                    Err(reason) => this.error = Some(reason),
                 }
                 cx.notify();
             })

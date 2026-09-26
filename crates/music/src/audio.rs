@@ -1,6 +1,6 @@
 use std::num::NonZero;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -8,10 +8,16 @@ use cpal::traits::{DeviceTrait, HostTrait};
 use rodio::source::SeekError;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source};
 
+use crate::equalizer::{Equalized, Equalizer};
 use crate::spectrum::{Spectrum, Tap};
 
 pub const RAMP: Duration = Duration::from_millis(25);
 const BUFFER: Duration = Duration::from_millis(50);
+
+/// The device stream every output in the process mixes into, so the sound server sees Sonora as
+/// one client however many engines are running. It runs at the rate of whatever played last and
+/// closes when the last output on it drops.
+static SHARED: Mutex<Weak<Device>> = Mutex::new(Weak::new());
 
 #[derive(Clone)]
 pub struct Volume(Arc<AtomicU32>);
@@ -30,41 +36,82 @@ impl Volume {
     }
 }
 
-pub struct Output {
-    sink: Arc<rodio::Player>,
-    volume: Volume,
-    device: String,
-    failed: Arc<AtomicBool>,
-    _stream: MixerDeviceSink,
+/// What sits between the queue and the device: the equalizer, then the volume ramp, with the
+/// spectrum tap listening at the end. Every engine builds one and hands it to the output.
+pub struct Chain {
+    pub volume: Volume,
+    pub equalizer: Equalizer,
+    pub spectrum: Spectrum,
 }
 
-impl Output {
-    pub fn open(volume: Volume, spectrum: Spectrum) -> Result<Self> {
-        let host = cpal::default_host();
-        let device = host
+/// One open stream on an output device, with the mixer the engines' chains play into.
+struct Device {
+    id: String,
+    /// The rate the stream was opened for, whether or not the device could honour it.
+    wanted: Option<u32>,
+    rate: u32,
+    failed: Arc<AtomicBool>,
+    /// Taken when an output reopens the device at another rate, which closes the stream under
+    /// every output still on it.
+    stream: Mutex<Option<MixerDeviceSink>>,
+}
+
+impl Device {
+    /// The shared stream on the default device, at `rate` when one is given. It opens a new
+    /// stream when no output holds a healthy one there at that rate, closing the old stream on
+    /// the same device first. A stream left on a device that is no longer the default stays with
+    /// the outputs still using it until they reopen.
+    fn shared(rate: Option<u32>) -> Result<Arc<Self>> {
+        let device = cpal::default_host()
             .default_output_device()
             .context("no audio output device")?;
+        let id = ident(&device);
 
+        let mut shared = SHARED.lock().unwrap_or_else(PoisonError::into_inner);
+        let current = shared.upgrade().filter(|open| open.id == id);
+        if let Some(open) = &current
+            && open.live()
+            && rate.is_none_or(|rate| open.fits(rate))
+        {
+            return Ok(open.clone());
+        }
+        if let Some(open) = current {
+            open.close();
+        }
+
+        let open = Arc::new(Self::open(device, id, rate)?);
+        *shared = Arc::downgrade(&open);
+        Ok(open)
+    }
+
+    /// Opens the device at `rate` when it offers that rate and at its default otherwise.
+    fn open(device: cpal::Device, id: String, rate: Option<u32>) -> Result<Self> {
         let default = device
             .default_output_config()
             .map_err(|error| anyhow::anyhow!("cannot read the output config: {error}"))?;
+        let config = match rate {
+            Some(rate) => at_rate(&device, &default, rate).unwrap_or_else(|| {
+                log::info!("sink: the device does not offer {rate} Hz, resampling instead");
+                default
+            }),
+            None => default,
+        };
 
-        let device_name = ident(&device);
         log::info!(
             "sink: using {} at {} Hz, {} channels, {}",
-            device_name,
-            default.sample_rate(),
-            default.channels(),
-            default.sample_format()
+            id,
+            config.sample_rate(),
+            config.channels(),
+            config.sample_format()
         );
 
-        let format = default.sample_format();
-        let frames = (BUFFER.as_secs_f64() * default.sample_rate() as f64).round() as u32;
+        let format = config.sample_format();
+        let frames = (BUFFER.as_secs_f64() * config.sample_rate() as f64).round() as u32;
         let failed = Arc::new(AtomicBool::new(false));
         let stream_failed = failed.clone();
         let builder = DeviceSinkBuilder::default()
             .with_device(device)
-            .with_config(&default.config())
+            .with_config(&config.config())
             .with_buffer_size(cpal::BufferSize::Fixed(frames))
             .with_sample_format(format)
             .with_error_callback(move |error| match error {
@@ -79,19 +126,63 @@ impl Output {
             .map_err(|error| anyhow::anyhow!("cannot open the audio output: {error}"))?;
         stream.log_on_drop(false);
 
-        let applied = volume.get();
-        let tap = spectrum.attach(default.sample_rate(), default.channels());
-        let (sink, source) = rodio::Player::new();
-        stream
-            .mixer()
-            .add(SmoothGain::new(source, volume.clone(), applied, RAMP).with_tap(tap));
-
         Ok(Self {
-            sink: Arc::new(sink),
-            volume,
-            device: device_name,
+            id,
+            wanted: rate,
+            rate: config.sample_rate(),
             failed,
-            _stream: stream,
+            stream: Mutex::new(Some(stream)),
+        })
+    }
+
+    /// Whether a track at `rate` can play on this stream without a reopen. A rate the device
+    /// turned down counts as fitting, so the output does not retry it on every track.
+    fn fits(&self, rate: u32) -> bool {
+        rate == self.rate || self.wanted == Some(rate)
+    }
+
+    /// Whether the stream is still open and has reported no error.
+    fn live(&self) -> bool {
+        !self.failed.load(Ordering::Acquire) && self.stream().is_some()
+    }
+
+    fn close(&self) {
+        self.stream().take();
+    }
+
+    /// Puts one engine's chain into the mixer. A stream that has closed drops it.
+    fn add(&self, source: impl Source + Send + 'static) {
+        if let Some(stream) = self.stream().as_ref() {
+            stream.mixer().add(source);
+        }
+    }
+
+    fn stream(&self) -> MutexGuard<'_, Option<MixerDeviceSink>> {
+        self.stream.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// One engine's player on the shared device stream. Dropping it ends the player's source in the
+/// mixer, and the stream closes once no output is left on it.
+pub struct Output {
+    chain: Chain,
+    sink: Arc<rodio::Player>,
+    device: Arc<Device>,
+    /// Set when `fit` could not reopen the device, so the engine reports the output gone.
+    broken: bool,
+}
+
+impl Output {
+    /// Joins the stream on the default output device at whatever rate it runs and runs every
+    /// sample through the equalizer and then the volume ramp before it reaches the mixer.
+    pub fn open(chain: Chain) -> Result<Self> {
+        let device = Device::shared(None)?;
+        let sink = attach(&chain, &device);
+        Ok(Self {
+            chain,
+            sink: Arc::new(sink),
+            device,
+            broken: false,
         })
     }
 
@@ -99,19 +190,55 @@ impl Output {
         &self.sink
     }
 
+    /// Whether a track at `rate` can go out as the output stands, without `fit` reopening it.
+    pub fn fits(&self, rate: u32) -> bool {
+        self.device.live() && self.device.fits(rate)
+    }
+
+    /// Moves this output onto a shared stream at `rate` unless it `fits` already, keeping the
+    /// player paused if it was. The stream reopens when it runs at another rate, which closes
+    /// it under the other engines. Whatever this output had queued is dropped and any clone of
+    /// `sink` goes stale, so callers do this before a track and take `sink` again when it
+    /// returns true.
+    pub fn fit(&mut self, rate: u32) -> Result<bool> {
+        if self.fits(rate) {
+            return Ok(false);
+        }
+        let paused = self.sink.is_paused();
+        let device = match Device::shared(Some(rate)) {
+            Ok(device) => device,
+            Err(error) => {
+                self.broken = true;
+                return Err(error);
+            }
+        };
+        let sink = attach(&self.chain, &device);
+        if paused {
+            sink.pause();
+        }
+        self.sink = Arc::new(sink);
+        self.device = device;
+        self.broken = false;
+        Ok(true)
+    }
+
     pub fn set_volume(&self, gain: f32) {
-        self.volume.set(gain);
+        self.chain.volume.set(gain);
     }
 
+    /// Whether what this output holds can no longer be heard: the stream reported an error,
+    /// another engine reopened it at another rate, or `fit` failed. Every output on the stream
+    /// sees an error. A fresh track recovers through `fit`, a paused one has to be reloaded.
     pub fn failed(&self) -> bool {
-        self.failed.load(Ordering::Acquire)
+        self.broken || !self.device.live()
     }
 
+    /// Whether the system's default device is no longer the one this output plays on.
     pub fn changed(&self) -> bool {
         cpal::default_host()
             .default_output_device()
             .map(|device| ident(&device))
-            .is_some_and(|device| device != "unknown" && device != self.device)
+            .is_some_and(|device| device != "unknown" && device != self.device.id)
     }
 }
 
@@ -119,6 +246,9 @@ pub struct SmoothGain<I> {
     input: I,
     volume: Volume,
     tap: Option<Tap>,
+    /// Whether the tap hears the samples from before the gain. It is read once per frame so
+    /// every channel of a frame agrees.
+    unscaled: bool,
 
     current: f32,
     target: f32,
@@ -139,6 +269,7 @@ impl<I: Source> SmoothGain<I> {
             input,
             volume,
             tap: None,
+            unscaled: false,
             current: initial,
             target: initial,
             step: 0.0,
@@ -165,6 +296,9 @@ impl<I: Source> SmoothGain<I> {
 
         self.channels = channels;
         self.rate = rate;
+        if let Some(tap) = &self.tap {
+            tap.format(rate, channels);
+        }
         self.ramp_frames = (self.ramp.as_secs_f64() * rate as f64).round().max(1.0) as u32;
         self.frames_left = self.frames_left.min(self.ramp_frames);
     }
@@ -178,6 +312,7 @@ impl<I: Source> Iterator for SmoothGain<I> {
 
         if self.channel == 0 {
             self.resync();
+            self.unscaled = self.tap.as_ref().is_some_and(Tap::absolute);
             let requested = self.volume.get().max(0.0);
 
             if requested.to_bits() != self.target.to_bits() {
@@ -198,7 +333,10 @@ impl<I: Source> Iterator for SmoothGain<I> {
 
         let output = sample * self.current;
         if let Some(tap) = self.tap.as_mut() {
-            tap.push(output);
+            tap.push(match self.unscaled {
+                true => sample,
+                false => output,
+            });
         }
 
         self.channel += 1;
@@ -312,9 +450,45 @@ impl<I: Source> Source for Trimmed<I> {
     }
 }
 
+/// Whether the system has a default output device to play on. A device can be missing for as
+/// long as it takes a headset to reconnect, so the engines ask again rather than give up.
+pub fn available() -> bool {
+    cpal::default_host().default_output_device().is_some()
+}
+
 fn ident(device: &cpal::Device) -> String {
     device
         .id()
         .map(|id| id.to_string())
         .unwrap_or_else(|_| "unknown".to_owned())
+}
+
+/// A fresh player whose chain plays into `device`.
+fn attach(chain: &Chain, device: &Device) -> rodio::Player {
+    let applied = chain.volume.get();
+    let tap = chain.spectrum.attach();
+    let (sink, source) = rodio::Player::new();
+    let equalized = Equalized::new(source, chain.equalizer.clone());
+    device.add(SmoothGain::new(equalized, chain.volume.clone(), applied, RAMP).with_tap(tap));
+    sink
+}
+
+/// The device's config at `rate` in the default's channels and sample format, if the device
+/// offers that combination.
+fn at_rate(
+    device: &cpal::Device,
+    default: &cpal::SupportedStreamConfig,
+    rate: u32,
+) -> Option<cpal::SupportedStreamConfig> {
+    if default.sample_rate() == rate {
+        return Some(default.clone());
+    }
+    device
+        .supported_output_configs()
+        .ok()?
+        .filter(|range| {
+            range.channels() == default.channels()
+                && range.sample_format() == default.sample_format()
+        })
+        .find_map(|range| range.try_with_sample_rate(rate))
 }

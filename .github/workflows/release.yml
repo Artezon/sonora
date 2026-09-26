@@ -49,7 +49,7 @@ jobs:
         run: |
           case "$GITHUB_REF" in
             refs/tags/*) version="$GITHUB_REF_NAME" ;;
-            *) version="$(git rev-parse --short HEAD)" ;;
+            *) version="${GITHUB_SHA:0:7}" ;;
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -155,7 +155,7 @@ jobs:
               ;;
 
             *)
-              version="$(git rev-parse --short HEAD)"
+              version="${GITHUB_SHA:0:7}"
               number="0.0.0"
               ;;
           esac
@@ -256,6 +256,191 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  appimage:
+    name: "AppImage (${{ matrix.variant.arch }})"
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+
+    runs-on: ${{ matrix.variant.runner }}
+
+    env:
+      # The runner images carry no libfuse2, so every AppImage tool has to unpack itself.
+      APPIMAGE_EXTRACT_AND_RUN: 1
+      ARCH: ${{ matrix.variant.arch }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: name the artifact
+        id: meta
+        shell: bash
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/*)
+              version="$GITHUB_REF_NAME"
+              number="${GITHUB_REF_NAME#v}"
+              ;;
+
+            *)
+              version="${GITHUB_SHA:0:7}"
+              number=""
+              ;;
+          esac
+
+          # Only a stable tag embeds where to update from. GitHub's latest release never points
+          # at a prerelease, so a beta would be offered an older stable build, and an untagged
+          # build would be offered a release it was never cut from.
+          update=""
+          case "$number" in
+            "" | *-*) ;;
+            *) update="gh-releases-zsync|${GITHUB_REPOSITORY%/*}|${GITHUB_REPOSITORY#*/}|latest|sonora-*-$ARCH.AppImage.zsync" ;;
+          esac
+
+          {
+            echo "version=$version"
+            echo "number=$number"
+            echo "update=$update"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-${{ matrix.variant.target }}
+          path: staged
+
+      # The libraries the executable links, so linuxdeploy can resolve and copy them. Its own
+      # excludelist decides which of them stay behind and come from the host instead.
+      - name: system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            patchelf file desktop-file-utils \
+            libasound2 libfontconfig1 libfreetype6 libsqlite3-0 \
+            libx11-6 libxcb1 libxcursor1 libxi6 \
+            libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 \
+            libvulkan1 libdbus-1-3
+
+      - name: fetch the AppImage tools
+        run: |
+          set -euo pipefail
+          base=https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous
+          curl -fsSL -o linuxdeploy "$base/linuxdeploy-$ARCH.AppImage"
+          base=https://github.com/AppImage/appimagetool/releases/download/continuous
+          curl -fsSL -o appimagetool "$base/appimagetool-$ARCH.AppImage"
+          chmod +x linuxdeploy appimagetool
+
+      - name: assemble the AppDir
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          NUMBER: ${{ steps.meta.outputs.number }}
+          UPDATE: ${{ steps.meta.outputs.update }}
+          TARGET: ${{ matrix.variant.target }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p AppDir/usr/bin
+          cp "staged/sonora-$VERSION-$TARGET" AppDir/usr/bin/sonora
+          chmod +x AppDir/usr/bin/sonora
+
+          # Every asset is compiled into the executable, so the AppDir carries the desktop entry
+          # and the icons for the host's launcher and nothing else.
+          mkdir -p AppDir/usr/share/icons
+          cp -R assets/linux/icons/hicolor AppDir/usr/share/icons/
+
+          # The keys AppImage managers identify and version the app by go into a copy, so the
+          # entry the Flatpak and the distribution packages install stays as it is.
+          homepage="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          mkdir -p desktop
+          cp assets/linux/sonora.desktop desktop/sonora.desktop
+          {
+            echo "X-AppImage-Name=Sonora"
+            echo "X-AppImage-Arch=$ARCH"
+            echo "X-AppImage-Homepage=$homepage"
+            if [ -n "$NUMBER" ]; then echo "X-AppImage-Version=$NUMBER"; fi
+            if [ -n "$UPDATE" ]; then echo "X-AppImage-UpdateURL=$homepage"; fi
+          } >> desktop/sonora.desktop
+          desktop-file-validate desktop/sonora.desktop
+
+          ./linuxdeploy \
+            --appdir AppDir \
+            --executable AppDir/usr/bin/sonora \
+            --desktop-file desktop/sonora.desktop \
+            --icon-file assets/linux/sonora.svg
+
+          # The Vulkan loader has to be the host's: it is what finds the host's ICD, and a loader
+          # this old paired with a current driver is how an AppImage stops starting.
+          rm -f AppDir/usr/lib/libvulkan.so.1*
+
+          mkdir -p AppDir/usr/share/doc/sonora/icons
+          cp COPYING AppDir/usr/share/doc/sonora/LICENSE
+          cp THIRD-PARTY.md AppDir/usr/share/doc/sonora/
+          cp assets/fonts/LICENSE.txt AppDir/usr/share/doc/sonora/LICENSE.Inter
+          cp assets/icons/LICENSE AppDir/usr/share/doc/sonora/icons/LICENSE
+          for licence in assets/icons/*/LICENSE; do
+            pack="$(basename "$(dirname "$licence")")"
+            cp "$licence" "AppDir/usr/share/doc/sonora/icons/LICENSE.$pack"
+          done
+
+      - name: build the AppImage
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          UPDATE: ${{ steps.meta.outputs.update }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          image="sonora-$VERSION-$ARCH.AppImage"
+
+          # Given update information, appimagetool embeds it and writes the .zsync that
+          # AppImageUpdate diffs against beside the image, with a zsyncmake of its own.
+          # It also copies a VERSION it finds in its environment into X-AppImage-Version,
+          # which would put the tag's v prefix over the bare number the desktop file carries.
+          flags=()
+          if [ -n "$UPDATE" ]; then flags=(--updateinformation "$UPDATE"); fi
+          env -u VERSION ./appimagetool "${flags[@]}" AppDir "dist/$image"
+          if [ -f "$image.zsync" ]; then mv "$image.zsync" dist/; fi
+
+      - name: inspect the AppImage
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          NUMBER: ${{ steps.meta.outputs.number }}
+          UPDATE: ${{ steps.meta.outputs.update }}
+        run: |
+          set -euo pipefail
+          cd dist
+          image="sonora-$VERSION-$ARCH.AppImage"
+          "./$image" --appimage-extract > /dev/null
+          test -x squashfs-root/usr/bin/sonora
+          test -f squashfs-root/sonora.desktop
+          grep -qx "X-AppImage-Arch=$ARCH" squashfs-root/sonora.desktop
+          if [ -n "$NUMBER" ]; then
+            grep -qx "X-AppImage-Version=$NUMBER" squashfs-root/sonora.desktop
+          fi
+          if [ -n "$UPDATE" ]; then
+            test -f "$image.zsync"
+            # The runtime answers nothing to this flag once it is told to extract and run.
+            test "$(env -u APPIMAGE_EXTRACT_AND_RUN "./$image" --appimage-updateinformation)" = "$UPDATE"
+          else
+            test ! -e "$image.zsync"
+          fi
+          test -f squashfs-root/usr/share/doc/sonora/THIRD-PARTY.md
+          test ! -e squashfs-root/usr/lib/libvulkan.so.1
+          ldd squashfs-root/usr/bin/sonora
+          rm -rf squashfs-root
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-appimage-${{ matrix.variant.arch }}
+          path: dist/*
+          if-no-files-found: error
+
   # Build flatpak, see: https://github.com/flatpak/flatpak-github-actions
   flatpak:
     name: "Flatpak (${{ matrix.variant.arch }})"
@@ -286,7 +471,7 @@ jobs:
         run: |
           case "$GITHUB_REF" in
             refs/tags/*) version="$GITHUB_REF_NAME" ;;
-            *) version="$(git rev-parse --short HEAD)" ;;
+            *) version="${GITHUB_SHA:0:7}" ;;
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -401,7 +586,7 @@ jobs:
           git push --force "https://x-access-token:$TOKEN@github.com/$GITHUB_REPOSITORY" flatpak-repo
 
   release:
-    needs: [build, bundle, flatpak, flatpak-repo]
+    needs: [build, bundle, appimage, flatpak, flatpak-repo]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

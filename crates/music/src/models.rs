@@ -19,7 +19,7 @@ pub struct UserDetail {
     pub playlists: Vec<Playlist>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Contributor {
     pub id: String,
     pub name: String,
@@ -43,14 +43,14 @@ pub struct ArtistRef {
     pub id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credit {
     pub name: String,
     pub role: String,
     pub id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Track {
     pub id: Option<String>,
     pub name: String,
@@ -73,7 +73,7 @@ pub struct Track {
     pub credits: Vec<Credit>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Playlist {
     pub id: String,
     pub name: String,
@@ -88,7 +88,7 @@ pub struct Playlist {
     pub modified_at: Option<i64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReleaseType {
     Album,
     Single,
@@ -111,7 +111,7 @@ impl ReleaseType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Album {
     pub id: String,
     pub name: String,
@@ -134,6 +134,23 @@ pub struct AlbumDetail {
     pub tracks: Vec<Track>,
 }
 
+/// What an album page fills in once its tracks are already on screen: the releases the
+/// provider lists as related, with more from the same artist first and similar artists'
+/// releases topping the rail up, plus the similar artists themselves for the rail's
+/// artists tab. Every list replaces what the page held, and an empty one leaves that
+/// part alone.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AlbumCatalogue {
+    pub also_like: Vec<Album>,
+    pub similar: Vec<SavedArtist>,
+}
+
+impl AlbumCatalogue {
+    pub fn is_empty(&self) -> bool {
+        self.also_like.is_empty() && self.similar.is_empty()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Genre {
     pub id: String,
@@ -141,11 +158,15 @@ pub struct Genre {
     pub cover: Option<String>,
 }
 
+/// One card of a browse shelf. A provider's home and genre pages mix whatever the shelf holds,
+/// so a track or an artist sits beside albums and playlists in the same row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GenreItem {
     Playlist(Playlist),
     Album(Album),
     Genre(Genre),
+    Track(Track),
+    Artist(SavedArtist),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,7 +177,9 @@ pub struct GenreSection {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HomeFeed {
-    pub listen_again: Vec<Track>,
+    /// What the user has been playing lately, in every shape the provider lists it: songs and
+    /// videos, but also the albums, playlists and artists they came from.
+    pub listen_again: Vec<GenreItem>,
     pub quick_picks: Option<Vec<Track>>,
     pub sections: Vec<GenreSection>,
 }
@@ -200,7 +223,7 @@ pub struct ArtistProfile {
     pub biography: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedArtist {
     pub id: String,
     pub name: String,
@@ -216,6 +239,22 @@ pub struct Artist {
     pub monthly_listeners: Option<u64>,
     pub top_tracks: Vec<Track>,
     pub albums: Vec<Album>,
+}
+
+/// What an artist page fills in once its overview is already on screen. Every list
+/// replaces what `MusicApi::artist` answered with, and an empty one leaves that part alone.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ArtistCatalogue {
+    pub albums: Vec<Album>,
+    pub top_tracks: Vec<Track>,
+    /// What the artist guests on, from the provider's appears-on listing.
+    pub appears_on: Vec<Album>,
+}
+
+impl ArtistCatalogue {
+    pub fn is_empty(&self) -> bool {
+        self.albums.is_empty() && self.top_tracks.is_empty() && self.appears_on.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -415,19 +454,20 @@ pub struct LyricsHit {
     pub writers: Vec<String>,
 }
 
-/// A provider's mixed library row, in the order returned by its library service.
+/// Something the provider keeps sidebar pins for, with whether it is pinned now. The uri is
+/// the provider's own and is what `MusicApi::set_pinned` takes.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LibraryItem {
+pub struct PinTarget {
     pub uri: String,
     pub name: String,
     pub subtitle: String,
     pub cover: Option<String>,
-    pub kind: LibraryItemKind,
+    pub kind: PinTargetKind,
     pub pinned: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LibraryItemKind {
+pub enum PinTargetKind {
     Playlist,
     Album,
     Artist,
@@ -437,26 +477,12 @@ pub enum LibraryItemKind {
     Folder,
 }
 
+/// How a provider answered a pin change. `LimitReached` means it turned the pin away for
+/// holding too many already, and `Outside` that it can only pin what is in the listener's
+/// library. Either way the pin stays a local one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LibraryPinResult {
+pub enum PinOutcome {
     Updated,
     LimitReached,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum LibraryOrder {
-    #[default]
-    Recents,
-    RecentlyAdded,
-    Alphabetical,
-    Creator,
-}
-
-impl LibraryOrder {
-    pub const ALL: [Self; 4] = [
-        Self::Recents,
-        Self::RecentlyAdded,
-        Self::Alphabetical,
-        Self::Creator,
-    ];
+    Outside,
 }

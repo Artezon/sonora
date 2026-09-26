@@ -8,7 +8,6 @@ use crate::{MusicApi, MusicProvider, ProviderSession};
 
 const NAME: &str = "Sonora live privacy test — safe to delete";
 const VERIFY_ATTEMPTS: usize = 30;
-const LIBRARY_LIMIT: u32 = 10_000;
 
 #[tokio::test]
 #[ignore = "creates, changes, and deletes a playlist on the connected Spotify account"]
@@ -88,7 +87,7 @@ async fn reported(api: &dyn MusicApi, playlist_id: &str) -> Option<bool> {
         .ok()
         .map(|detail| detail.playlist.public);
     let listed = api
-        .playlists(LIBRARY_LIMIT)
+        .playlists()
         .await
         .ok()
         .and_then(|playlists| {

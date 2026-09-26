@@ -186,6 +186,7 @@ pub struct Input {
     icon: Option<SharedString>,
     compact: bool,
     tucked: bool,
+    blurred: bool,
     clearable: bool,
     masked: bool,
     content: SharedString,
@@ -207,6 +208,7 @@ impl Input {
             icon: None,
             compact: false,
             tucked: false,
+            blurred: false,
             clearable: false,
             masked: false,
             content: SharedString::default(),
@@ -236,6 +238,15 @@ impl Input {
         self
     }
 
+    /// Marks a field that floats over content, the settings header say. It always casts a
+    /// soft shadow, and draws as frosted glass rather than the flat secondary fill while
+    /// `blurring` is on. The flag is usually set once at construction, so the field asks
+    /// `blurring` itself at render.
+    pub fn blurred(mut self) -> Self {
+        self.blurred = true;
+        self
+    }
+
     pub fn clearable(mut self) -> Self {
         self.clearable = true;
         self
@@ -252,6 +263,13 @@ impl Input {
 
     pub fn set_hint(&mut self, hint: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.hint = hint.into();
+        cx.notify();
+    }
+
+    /// Draws the content as dots, or stops. Offsets stay content offsets either way, so the
+    /// caret and the selection survive the flip.
+    pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
+        self.masked = masked;
         cx.notify();
     }
 

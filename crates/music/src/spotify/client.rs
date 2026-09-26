@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{MediaKind, MusicApi};
+use crate::{MediaKind, MusicApi, escape};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use librespot_core::Session;
@@ -8,12 +8,11 @@ use librespot_protocol::playlist4_external::SelectedListContent as RootList;
 use protobuf::Message as _;
 
 use crate::spotify::{
-    albums, artists, collection, collection2, lyrics, pathfinder, playlists, profiles, radio,
-    search, wire,
+    albums, artists, collection, collection2, pathfinder, playlists, profiles, radio, search, wire,
 };
 use crate::{
-    Album, AlbumDetail, Artist, ArtistProfile, Genre, GenreDetail, HomeFeed, Lyrics, Playlist,
-    PlaylistDetail, SavedArtist, Track, UserDetail, UserProfile,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Genre, GenreDetail,
+    HomeFeed, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track, UserDetail, UserProfile,
 };
 
 const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
@@ -30,6 +29,21 @@ impl LibrespotClient {
     pub fn session(&self) -> &Session {
         &self.session
     }
+
+    /// The account's own display name, or `None` when the lookup fails. Signing in calls this,
+    /// so a profile Spotify will not hand over must not take the session down with it.
+    async fn display_name(&self, username: &str) -> Option<String> {
+        let body = self
+            .session
+            .spclient()
+            .get_user_profile(&escape::component(username), None, None)
+            .await
+            .inspect_err(|error| log::debug!("profiles: cannot read {username}: {error}"))
+            .ok()?;
+
+        let profile: wire::Named = serde_json::from_slice(&body).ok()?;
+        profile.label().map(str::to_owned)
+    }
 }
 
 #[async_trait]
@@ -45,20 +59,20 @@ impl MusicApi for LibrespotClient {
             MediaKind::Artist => "artist",
             MediaKind::Playlist => "playlist",
         };
-        Some(format!("https://open.spotify.com/{kind}/{id}"))
+        Some(format!(
+            "https://open.spotify.com/{kind}/{}",
+            escape::component(id)
+        ))
     }
 
     async fn profile(&self) -> Result<UserProfile> {
         let username = self.session.username();
-        let body = self
-            .session
-            .spclient()
-            .get_user_profile(&username, None, None)
-            .await?;
-
-        let profile: wire::Named = serde_json::from_slice(&body).unwrap_or_default();
+        let display_name = self
+            .display_name(&username)
+            .await
+            .unwrap_or_else(|| username.clone());
         Ok(UserProfile {
-            display_name: profile.label().unwrap_or(&username).to_owned(),
+            display_name,
             id: username,
         })
     }
@@ -71,6 +85,10 @@ impl MusicApi for LibrespotClient {
         artists::artist(&self.session, artist_id).await
     }
 
+    async fn artist_catalogue(&self, artist_id: &str, known: &[Track]) -> Result<ArtistCatalogue> {
+        artists::catalogue(&self.session, artist_id, known.to_vec()).await
+    }
+
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
         artists::profile(&self.session, artist_id).await
     }
@@ -79,8 +97,8 @@ impl MusicApi for LibrespotClient {
         artists::images(&self.session, &ids).await
     }
 
-    async fn saved_tracks(&self, limit: u32) -> Result<Vec<Track>> {
-        collection::saved_tracks(&self.session, limit).await
+    async fn saved_tracks(&self) -> Result<Vec<Track>> {
+        collection::saved_tracks(&self.session).await
     }
 
     async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
@@ -95,20 +113,16 @@ impl MusicApi for LibrespotClient {
         pathfinder::track(&self.session, track_id).await
     }
 
-    async fn track_lyrics(&self, track_id: &str) -> Result<Option<Lyrics>> {
-        lyrics::lyrics(&self.session, track_id).await
-    }
-
-    async fn saved_albums(&self, limit: u32) -> Result<Vec<Album>> {
-        albums::saved_albums(&self.session, limit).await
+    async fn saved_albums(&self) -> Result<Vec<Album>> {
+        albums::saved_albums(&self.session).await
     }
 
     async fn set_album_saved(&self, album_id: &str, saved: bool) -> Result<()> {
         collection2::set_album_saved(&self.session, album_id, saved).await
     }
 
-    async fn saved_artists(&self, limit: u32) -> Result<Vec<SavedArtist>> {
-        artists::saved_artists(&self.session, limit).await
+    async fn saved_artists(&self) -> Result<Vec<SavedArtist>> {
+        artists::saved_artists(&self.session).await
     }
 
     async fn set_artist_saved(&self, artist_id: &str, saved: bool) -> Result<()> {
@@ -121,6 +135,28 @@ impl MusicApi for LibrespotClient {
 
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>> {
         albums::album_tracks(&self.session, album_id).await
+    }
+
+    /// The artist's own releases without the album the page is already showing. Similar
+    /// artists stay out: the internal queries are persisted by hash, so nothing here can
+    /// ask for a relationship the official client never registered.
+    async fn album_catalogue(
+        &self,
+        album_id: &str,
+        artist_id: Option<&str>,
+    ) -> Result<AlbumCatalogue> {
+        let Some(artist_id) = artist_id else {
+            return Ok(AlbumCatalogue::default());
+        };
+        let mut also_like = artists::discography(&self.session, artist_id)
+            .await
+            .with_context(|| format!("cannot load more from artist {artist_id}"))?;
+        also_like.retain(|album| album.id != album_id);
+        also_like.truncate(SUGGESTIONS);
+        Ok(AlbumCatalogue {
+            also_like,
+            similar: Vec::new(),
+        })
     }
 
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
@@ -144,8 +180,12 @@ impl MusicApi for LibrespotClient {
         playlists::playlist_tracks(&self.session, playlist_id).await
     }
 
-    async fn track_radio(&self, track_id: &str) -> Result<Vec<Track>> {
-        radio::track_radio(&self.session, track_id).await
+    async fn track_radio(
+        &self,
+        track_id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        Ok((radio::track_radio(&self.session, track_id).await?, None))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
@@ -212,31 +252,20 @@ impl MusicApi for LibrespotClient {
         playlists::remove_track(&self.session, playlist_id, track_id).await
     }
 
-    async fn set_library_item_pinned(
-        &self,
-        uri: &str,
-        pinned: bool,
-    ) -> Result<crate::LibraryPinResult> {
-        pathfinder::set_library_item_pinned(&self.session, uri, pinned).await
+    async fn set_pinned(&self, uri: &str, pinned: bool) -> Result<crate::PinOutcome> {
+        pathfinder::set_pinned(&self.session, uri, pinned).await
     }
 
-    async fn library_items(
-        &self,
-        order: crate::LibraryOrder,
-    ) -> Result<Option<Vec<crate::LibraryItem>>> {
-        pathfinder::library(&self.session, order).await.map(Some)
+    async fn pin_targets(&self) -> Result<Option<Vec<crate::PinTarget>>> {
+        pathfinder::library(&self.session).await.map(Some)
     }
 
-    async fn playlists(&self, limit: u32) -> Result<Vec<Playlist>> {
+    async fn playlists(&self) -> Result<Vec<Playlist>> {
         let mut playlists = Vec::new();
         let mut offset = 0;
         let mut seen = HashSet::new();
-        while playlists.len() < limit as usize {
-            let body = self
-                .session
-                .spclient()
-                .get_rootlist(offset, Some(300))
-                .await?;
+        loop {
+            let body = playlists::rootlist_page(&self.session, offset, 300).await?;
             let rootlist =
                 RootList::parse_from_bytes(&body).context("cannot decode the rootlist protobuf")?;
             let count = rootlist.contents.items.len();
@@ -250,7 +279,6 @@ impl MusicApi for LibrespotClient {
                 break;
             }
         }
-        playlists.truncate(limit as usize);
 
         let owners = playlists
             .iter()

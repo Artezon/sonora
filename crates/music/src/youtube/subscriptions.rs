@@ -7,7 +7,7 @@ use crate::SavedArtist;
 
 const LIBRARY_SUBSCRIPTIONS: &str = "FEmusic_library_corpus_artists";
 
-pub async fn saved(api: &YtMusic, limit: u32) -> Result<Vec<SavedArtist>> {
+pub async fn saved(api: &YtMusic) -> Result<Vec<SavedArtist>> {
     let response = api
         .execute(
             "browse",
@@ -18,9 +18,7 @@ pub async fn saved(api: &YtMusic, limit: u32) -> Result<Vec<SavedArtist>> {
     let renderers = ["musicTwoRowItemRenderer", "musicResponsiveListItemRenderer"]
         .into_iter()
         .flat_map(|kind| ytmusic::parse::find_renderers(&response, kind));
-    let mut artists = renderers.filter_map(saved_artist).collect::<Vec<_>>();
-    artists.truncate(limit as usize);
-    Ok(artists)
+    Ok(renderers.filter_map(saved_artist).collect())
 }
 
 fn saved_artist(renderer: &serde_json::Value) -> Option<SavedArtist> {

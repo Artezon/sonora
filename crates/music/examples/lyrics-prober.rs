@@ -10,8 +10,6 @@ use music::{
 };
 use ytmusic::YtMusic;
 
-const NATIVE: &str = "Spotify";
-const OWN_TRUST: u32 = 25;
 const LISTED: usize = 4;
 
 struct Probe {
@@ -23,6 +21,8 @@ struct Probe {
 
 fn providers() -> Vec<Arc<dyn LyricsProvider>> {
     vec![
+        Arc::new(music::spotify::SpotifyLyrics::from_env()),
+        Arc::new(music::youtube::YouTubeLyrics::new()),
         Arc::new(binimum::Binimum::new()),
         Arc::new(musixmatch::Musixmatch::new()),
         Arc::new(lrclib::LrcLib::new()),
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
         bail!("usage: lyrics-prober <spotify or youtube link, or a search query>");
     };
 
-    let (track, provider, native) = resolve(&link).await?;
+    let (track, provider) = resolve(&link).await?;
     let query = LyricsQuery {
         title: track.name.clone(),
         artist: track.artists.clone(),
@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
     );
     println!();
 
-    let mut probes = probe(&query, native).await;
+    let mut probes = probe(&query).await;
     probes.sort_by_key(|probe| probe.elapsed);
 
     println!(
@@ -122,14 +122,14 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn resolve(link: &str) -> Result<(Track, &'static str, Option<Arc<LibrespotClient>>)> {
+async fn resolve(link: &str) -> Result<(Track, &'static str)> {
     if let Some(id) = youtube_id(link) {
         let api = Arc::new(YtMusic::anonymous());
         let track = YouTubeClient::new(api)
             .track(&id)
             .await
             .context("cannot look the video up as a guest")?;
-        return Ok((track, "youtube", None));
+        return Ok((track, "youtube"));
     }
 
     let session = auth::restore(&AuthConfig::from_env())
@@ -152,10 +152,10 @@ async fn resolve(link: &str) -> Result<(Track, &'static str, Option<Arc<Librespo
             .context("nothing found for that query")?,
     };
 
-    Ok((track, "spotify", Some(client)))
+    Ok((track, "spotify"))
 }
 
-async fn probe(query: &LyricsQuery, native: Option<Arc<LibrespotClient>>) -> Vec<Probe> {
+async fn probe(query: &LyricsQuery) -> Vec<Probe> {
     let mut tasks = tokio::task::JoinSet::new();
     for provider in providers() {
         let query = query.clone();
@@ -167,28 +167,6 @@ async fn probe(query: &LyricsQuery, native: Option<Arc<LibrespotClient>>) -> Vec
                 elapsed: started.elapsed(),
                 hits: found.as_ref().map(Vec::clone).unwrap_or_default(),
                 error: found.err().map(|error| format!("{error:#}")),
-            }
-        });
-    }
-
-    if let Some(client) = native
-        && let Some(id) = query.track.as_ref().map(|key| key.id.clone())
-    {
-        let query = query.clone();
-        tasks.spawn(async move {
-            let started = Instant::now();
-            let found = client.track_lyrics(&id).await;
-            let elapsed = started.elapsed();
-            let (hits, error) = match found {
-                Ok(Some(lyrics)) if !lyrics.is_empty() => (vec![own(lyrics, &query)], None),
-                Ok(_) => (Vec::new(), None),
-                Err(error) => (Vec::new(), Some(format!("{error:#}"))),
-            };
-            Probe {
-                source: NATIVE,
-                elapsed,
-                hits,
-                error,
             }
         });
     }
@@ -241,20 +219,6 @@ fn report(query: &LyricsQuery, found: &Probe) {
     }
     if let Some(rest) = scored.len().checked_sub(LISTED).filter(|rest| *rest > 0) {
         println!("{:<12} {:>6} {:>5}  {rest:>6} more", "", "", "");
-    }
-}
-
-fn own(lyrics: Lyrics, query: &LyricsQuery) -> LyricsHit {
-    LyricsHit {
-        source: NATIVE,
-        trust: OWN_TRUST,
-        lyrics,
-        instrumental: false,
-        title: query.title.clone(),
-        artist: query.artist.clone(),
-        album: query.album.clone(),
-        duration: (!query.duration.is_zero()).then_some(query.duration),
-        writers: Vec::new(),
     }
 }
 

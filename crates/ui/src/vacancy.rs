@@ -1,17 +1,21 @@
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Div, SharedString, StyleRefinement, Window, div, svg};
+use gpui::{AnyElement, App, Div, SharedString, StyleRefinement, TextAlign, Window, div, svg};
 
 use crate::label::vacant;
+use crate::metrics::Text;
 use crate::theme::ActiveTheme as _;
 
 const GLYPH: f32 = 0.35;
 const GLYPH_SIZE: f32 = 0.5;
 const COMPACT_SIZE: f32 = 0.22;
+const DETAIL: f32 = 0.8;
+const WORDS: f32 = 2.5;
 
 #[derive(IntoElement)]
 pub struct Vacancy {
     base: Div,
     label: SharedString,
+    detail: Option<SharedString>,
     icon: Option<SharedString>,
     action: Option<AnyElement>,
     compact: bool,
@@ -22,6 +26,7 @@ impl Vacancy {
         Self {
             base: div(),
             label: label.into(),
+            detail: None,
             icon: None,
             action: None,
             compact: false,
@@ -31,6 +36,12 @@ impl Vacancy {
     /// A smaller glyph, for a narrow place like the sidebar.
     pub fn compact(mut self) -> Self {
         self.compact = true;
+        self
+    }
+
+    /// A second, quieter line under the label, for the reason behind an empty page.
+    pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
+        self.detail = Some(detail.into());
         self
     }
 
@@ -56,6 +67,7 @@ impl RenderOnce for Vacancy {
         let Self {
             mut base,
             label,
+            detail,
             icon,
             action,
             compact,
@@ -88,10 +100,39 @@ impl RenderOnce for Vacancy {
                         .text_color(theme.muted_foreground.opacity(GLYPH)),
                 )
             })
-            .child(vacant(label, cx))
+            .child(match detail {
+                Some(detail) => caption(label, detail, cx).into_any_element(),
+                None => vacant(label, cx).into_any_element(),
+            })
             .when_some(action, |this, action| this.child(action));
 
         vacancy.style().refine(&overrides);
         vacancy
     }
+}
+
+/// The label and its reason stacked, padded the way `vacant` pads its one line.
+fn caption(label: SharedString, detail: SharedString, cx: &App) -> Div {
+    let theme = cx.theme();
+
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_1()
+        .p(theme.metrics.pad * 2.)
+        .max_w(theme.metrics.cover * WORDS)
+        .text_align(TextAlign::Center)
+        .child(
+            div()
+                .text_size(theme.text(Text::Label))
+                .text_color(theme.muted_foreground)
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(theme.text(Text::Small))
+                .text_color(theme.muted_foreground.opacity(DETAIL))
+                .child(detail),
+        )
 }

@@ -8,7 +8,6 @@ use crate::{MusicApi, MusicProvider, ProviderSession};
 
 const SPOTIFY_ARTISTS: &[&str] = &["1WAB4gjjNfQpAgT5SoAbRE"];
 const YOUTUBE_ARTISTS: &[&str] = &["UCilQecy8UKHUSgE6l-uxP1Q"];
-const LIBRARY_LIMIT: u32 = 10_000;
 const VERIFY_ATTEMPTS: usize = 30;
 
 #[tokio::test]
@@ -92,7 +91,7 @@ async fn wait_until_saved(api: &dyn MusicApi, artist_id: &str, expected: bool) -
 
 async fn artist_is_saved(api: &dyn MusicApi, artist_id: &str) -> Result<bool> {
     Ok(api
-        .saved_artists(LIBRARY_LIMIT)
+        .saved_artists()
         .await?
         .iter()
         .any(|artist| artist.id == artist_id))

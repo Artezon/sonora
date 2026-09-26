@@ -1,6 +1,8 @@
+use anyhow::{Context as _, Result};
 use tokio::sync::mpsc::UnboundedSender;
 use tray_icon::menu::{
-    Icon as MenuIcon, IconMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem,
+    CheckMenuItem, Icon as MenuIcon, IconMenuItem, Menu, MenuEvent, MenuId, MenuItem,
+    PredefinedMenuItem,
 };
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -13,12 +15,21 @@ const PNG: &[u8] = match cfg!(target_os = "macos") {
 };
 const MENU_ON_CLICK: bool = cfg!(target_os = "macos");
 
+/// The tray icon and its menu. The status item is built the first time it goes into the tray, so
+/// a Sonora started with the icon off never shows it, not even for a frame.
 pub struct Icon {
-    icon: TrayIcon,
+    /// The Sonora logo the status item is built with.
+    logo: tray_icon::Icon,
+    menu: Menu,
+    icon: Option<TrayIcon>,
+    /// The last caption, for the tooltip of a status item built after it was shown.
+    tooltip: String,
     caption: IconMenuItem,
     toggle: MenuItem,
     previous: MenuItem,
     next: MenuItem,
+    shuffle: CheckMenuItem,
+    repeat: CheckMenuItem,
     show: MenuItem,
     quit: MenuItem,
 }
@@ -33,8 +44,8 @@ impl Icon {
             }
         };
         let (width, height) = image.dimensions();
-        let icon = match tray_icon::Icon::from_rgba(image.into_raw(), width, height) {
-            Ok(icon) => icon,
+        let logo = match tray_icon::Icon::from_rgba(image.into_raw(), width, height) {
+            Ok(logo) => logo,
             Err(error) => {
                 log::warn!("tray: cannot build the tray icon: {error:#}");
                 return None;
@@ -45,6 +56,8 @@ impl Icon {
         let toggle = MenuItem::with_id("toggle", "", true, None);
         let previous = MenuItem::with_id("previous", "", true, None);
         let next = MenuItem::with_id("next", "", true, None);
+        let shuffle = CheckMenuItem::with_id("shuffle", "", true, false, None);
+        let repeat = CheckMenuItem::with_id("repeat", "", true, false, None);
         let show = MenuItem::with_id("show", "", true, None);
         let quit = MenuItem::with_id("quit", "", true, None);
         let menu = Menu::new();
@@ -55,27 +68,15 @@ impl Icon {
             &previous,
             &next,
             &PredefinedMenuItem::separator(),
+            &shuffle,
+            &repeat,
+            &PredefinedMenuItem::separator(),
             &show,
             &quit,
         ]) {
             log::warn!("tray: cannot build the tray menu: {error:#}");
             return None;
         }
-
-        let built = TrayIconBuilder::new()
-            .with_icon(icon)
-            .with_icon_as_template(true)
-            .with_tooltip(TOOLTIP)
-            .with_menu(Box::new(menu))
-            .with_menu_on_left_click(MENU_ON_CLICK)
-            .build();
-        let icon = match built {
-            Ok(icon) => icon,
-            Err(error) => {
-                log::warn!("tray: cannot place the tray icon: {error:#}");
-                return None;
-            }
-        };
 
         let menus = sender.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -98,20 +99,61 @@ impl Icon {
         }));
 
         Some(Self {
-            icon,
+            logo,
+            menu,
+            icon: None,
+            tooltip: TOOLTIP.to_owned(),
             caption,
             toggle,
             previous,
             next,
+            shuffle,
+            repeat,
             show,
             quit,
         })
     }
 
+    /// Whether there is a tray to bring Sonora back from, which Windows and macOS always have.
+    pub fn hosted() -> bool {
+        true
+    }
+
+    /// Puts the icon in the tray, or takes it out. The status item stays alive once built, so the
+    /// menu and its handlers survive a round trip.
+    pub fn place(&mut self, placed: bool) -> Result<()> {
+        match &self.icon {
+            Some(icon) => icon
+                .set_visible(placed)
+                .context("cannot show or hide the status item")?,
+            None if placed => self.icon = Some(self.build()?),
+            None => {}
+        }
+        Ok(())
+    }
+
+    /// Builds the status item, which puts it in the tray.
+    fn build(&self) -> Result<TrayIcon> {
+        let icon = TrayIconBuilder::new()
+            .with_icon(self.logo.clone())
+            .with_icon_as_template(true)
+            .with_tooltip(&self.tooltip)
+            .with_menu(Box::new(self.menu.clone()))
+            .with_menu_on_left_click(MENU_ON_CLICK)
+            .build()
+            .context("cannot build the status item")?;
+        #[cfg(target_os = "macos")]
+        keep_cover(&icon);
+        Ok(icon)
+    }
+
     pub fn show(&mut self, shown: &Shown) {
         // the status notifier hosts read the caption off the tooltip themselves; here it has to
         // be pushed, or hovering the icon only ever says Sonora
-        if let Err(error) = self.icon.set_tooltip(Some(&shown.caption)) {
+        self.tooltip.clone_from(&shown.caption);
+        if let Some(icon) = &self.icon
+            && let Err(error) = icon.set_tooltip(Some(&shown.caption))
+        {
             log::warn!("tray: cannot set the tooltip: {error:#}");
         }
         self.caption.set_text(&shown.caption);
@@ -120,6 +162,10 @@ impl Icon {
         self.toggle.set_text(&shown.toggle);
         self.previous.set_text(&shown.previous);
         self.next.set_text(&shown.next);
+        self.shuffle.set_text(&shown.shuffle);
+        self.shuffle.set_checked(shown.shuffle_on);
+        self.repeat.set_text(&shown.repeat);
+        self.repeat.set_checked(shown.repeat_on);
         self.show.set_text(&shown.show);
         self.quit.set_text(&shown.quit);
     }
@@ -137,12 +183,39 @@ fn cover(art: Option<&Art>) -> Option<MenuIcon> {
     }
 }
 
+/// Keeps the cover on the caption row. From macOS 27 AppKit decides on its own whether a menu
+/// item shows its image and typically hides it, so the caption asks for its image to stay. Older
+/// systems do not know the selector and always show it.
+#[cfg(target_os = "macos")]
+fn keep_cover(icon: &TrayIcon) {
+    use objc2::runtime::NSObjectProtocol as _;
+    use objc2::{MainThreadMarker, msg_send, sel};
+
+    const VISIBLE: isize = 1;
+    let Some(mtm) = MainThreadMarker::new() else {
+        return log::warn!("tray: the tray menu was built off the main thread");
+    };
+    let Some(caption) = icon
+        .ns_status_item()
+        .and_then(|item| item.menu(mtm))
+        .and_then(|menu| menu.itemAtIndex(0))
+    else {
+        return log::warn!("tray: the caption row is missing from the tray menu");
+    };
+    if !caption.respondsToSelector(sel!(setPreferredImageVisibility:)) {
+        return;
+    }
+    unsafe { msg_send![&*caption, setPreferredImageVisibility: VISIBLE] }
+}
+
 fn translate(id: &MenuId) -> Option<Event> {
     Some(match id.0.as_str() {
         "caption" => Event::Song,
         "toggle" => Event::Toggle,
         "previous" => Event::Previous,
         "next" => Event::Next,
+        "shuffle" => Event::Shuffle,
+        "repeat" => Event::Repeat,
         "show" => Event::Show,
         "quit" => Event::Quit,
         _ => return None,

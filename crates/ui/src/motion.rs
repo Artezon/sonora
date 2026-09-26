@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -171,8 +171,30 @@ pub fn veiled<E: Styled>(element: E, hidden: f32) -> E {
         .blur(ENTRANCE_BLUR * hidden)
 }
 
-fn entering<E: Styled>(element: E, hidden: f32) -> E {
+/// The whole entrance: the veil plus the fade that goes with it. Use this where
+/// the element has to carry its own opacity; where a scrim can stand in for the
+/// fade, prefer [`veiled`], which stays out of the way of a cached layout. Never
+/// put this over a cached view: opacity is baked into primitives as they are
+/// painted, and a cached view replays them, so the fade freezes at whatever
+/// frame the cache was filled on.
+pub fn entering<E: Styled>(element: E, hidden: f32) -> E {
     veiled(element, hidden).opacity(1. - hidden.clamp(0., 1.))
+}
+
+/// The entrance's fade with none of its filter, for the one thing that cannot ride the
+/// entrance itself. `veiled` and `entering` are paint filters, and the renderer drops a
+/// backdrop inside a filtered layer, so a surface that frosts what it covers fades its blur in
+/// as a sibling underneath the rising panel rather than rising with it.
+pub trait Fading: Sized {
+    fn fading(self, id: impl Into<ElementId>) -> AnimationElement<Self>;
+}
+
+impl<E: Styled + IntoElement + 'static> Fading for E {
+    fn fading(self, id: impl Into<ElementId>) -> AnimationElement<Self> {
+        self.with_animation(id, entrance(), |element, delta| {
+            element.opacity(delta.clamp(0., 1.))
+        })
+    }
 }
 
 pub trait Rising: Sized {
@@ -291,11 +313,12 @@ impl Stillness {
         }
     }
 
-    pub fn still(self) -> bool {
+    /// Whether motion is reduced: `Some` for a hard choice, `None` when the system decides.
+    pub fn still(self) -> Option<bool> {
         match self {
-            Self::System => system_still(),
-            Self::Always => true,
-            Self::Never => false,
+            Self::System => None,
+            Self::Always => Some(true),
+            Self::Never => Some(false),
         }
     }
 }
@@ -321,6 +344,7 @@ impl<E: IntoElement + 'static> Motioned for E {
 }
 
 pub fn apply(stillness: Stillness, pace: Pace, cx: &mut App) {
+    let generation = APPLY_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     PACE.store(
         match pace {
             Pace::Slow => 0,
@@ -329,7 +353,10 @@ pub fn apply(stillness: Stillness, pace: Pace, cx: &mut App) {
         },
         Ordering::Relaxed,
     );
-    cx.set_reduce_motion(stillness.still());
+    match stillness.still() {
+        Some(still) => cx.set_reduce_motion(still),
+        None => system::settle(cx, generation),
+    }
 }
 
 pub fn animates(cx: &App) -> bool {
@@ -360,13 +387,90 @@ impl Movement {
     }
 }
 
-fn system_still() -> bool {
-    false
+static APPLY_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// The operating system's reduce-motion preference. Every probe answers through
+/// `App::set_reduce_motion`, which repaints on a change. A generation check keeps a late probe
+/// from replacing a newer motion setting.
+mod system {
+    use gpui::App;
+
+    /// Reduce Motion under System Settings > Accessibility > Display.
+    #[cfg(target_os = "macos")]
+    pub(super) fn settle(cx: &mut App, _generation: u64) {
+        use objc2_app_kit::NSWorkspace;
+
+        let still = NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
+        cx.set_reduce_motion(still);
+    }
+
+    /// "Animation effects" under Settings > Accessibility > Visual effects.
+    #[cfg(windows)]
+    pub(super) fn settle(cx: &mut App, _generation: u64) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
+        };
+
+        let mut animated: windows_sys::core::BOOL = 1;
+        // SAFETY: SPI_GETCLIENTAREAANIMATION writes one BOOL through pvparam, which is what
+        // `animated` is, and asks nothing else of the caller.
+        let answered = unsafe {
+            SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, (&raw mut animated).cast(), 0)
+        };
+        cx.set_reduce_motion(answered != 0 && animated == 0);
+    }
+
+    /// Reads the standardized XDG reduced-motion preference.
+    ///
+    /// Older portals may not expose `org.freedesktop.appearance.reduced-motion`; that failure
+    /// leaves animations enabled.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub(super) fn settle(cx: &mut App, generation: u64) {
+        use ashpd::desktop::settings::{ReducedMotion, Settings};
+        use gpui::AppContext as _;
+        use std::sync::atomic::Ordering;
+
+        use super::APPLY_GENERATION;
+
+        cx.spawn(async move |cx| {
+            let still = cx
+                .background_spawn(async {
+                    let settings = Settings::new().await.ok()?;
+                    let reduced = settings.reduced_motion().await.ok()?;
+
+                    Some(reduced == ReducedMotion::ReducedMotion)
+                })
+                .await;
+            cx.update(|cx| {
+                if APPLY_GENERATION.load(Ordering::SeqCst) == generation {
+                    cx.set_reduce_motion(still.unwrap_or(false));
+                }
+            });
+        })
+        .detach();
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        windows,
+        target_os = "linux",
+        target_os = "freebsd"
+    )))]
+    pub(super) fn settle(cx: &mut App, _generation: u64) {
+        cx.set_reduce_motion(false);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_motion_leaves_the_preference_to_the_platform() {
+        assert_eq!(Stillness::System.still(), None);
+        assert_eq!(Stillness::Always.still(), Some(true));
+        assert_eq!(Stillness::Never.still(), Some(false));
+    }
 
     #[test]
     fn expo_easing_has_css_endpoints_and_shape() {

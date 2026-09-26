@@ -19,14 +19,8 @@ const TRACK_PREFIX: &str = "spotify:track:";
 const UNKNOWN: &str = "Unknown";
 const BATCH: usize = 500;
 
-pub async fn saved_tracks(session: &Session, limit: u32) -> Result<Vec<Track>> {
-    let items = collection2::saved_items(
-        session,
-        collection2::COLLECTION,
-        TRACK_PREFIX,
-        limit as usize,
-    )
-    .await?;
+pub async fn saved_tracks(session: &Session) -> Result<Vec<Track>> {
+    let items = collection2::saved_items(session, collection2::COLLECTION, TRACK_PREFIX).await?;
     if items.is_empty() {
         return Ok(Vec::new());
     }
@@ -73,9 +67,29 @@ pub(crate) async fn extended(
     kind: ExtensionKind,
 ) -> Result<Vec<EntityExtensionData>> {
     let mut entities = Vec::with_capacity(uris.len());
-    for batch in uris.chunks(BATCH) {
+    batched(session, uris, kind, BATCH, |batch| {
+        entities.extend(batch);
+        Ok(())
+    })
+    .await?;
+
+    Ok(entities)
+}
+
+/// Reads extended metadata a batch at a time and hands each batch to `take` before asking
+/// for the next one. A caller that turns the entities into its own models here never holds
+/// more than one batch of protobufs, which is what keeps a thousand-release discography from
+/// costing hundreds of megabytes.
+pub(crate) async fn batched(
+    session: &Session,
+    uris: &[String],
+    kind: ExtensionKind,
+    batch: usize,
+    mut take: impl FnMut(Vec<EntityExtensionData>) -> Result<()>,
+) -> Result<()> {
+    for uris in uris.chunks(batch.max(1)) {
         let request = BatchedEntityRequest {
-            entity_request: batch
+            entity_request: uris
                 .iter()
                 .map(|uri| EntityRequest {
                     entity_uri: uri.clone(),
@@ -89,14 +103,16 @@ pub(crate) async fn extended(
             ..Default::default()
         };
         let response = session.spclient().get_extended_metadata(request).await?;
-        entities.extend(
+        take(
             response
                 .extended_metadata
                 .into_iter()
-                .flat_map(|array| array.extension_data),
-        );
+                .flat_map(|array| array.extension_data)
+                .collect(),
+        )?;
     }
-    Ok(entities)
+
+    Ok(())
 }
 
 fn track_from(uri: &str, track: &TrackMessage) -> Track {

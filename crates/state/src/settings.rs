@@ -5,7 +5,7 @@
 //! `state.sqlite` as [`StateValues`]. [`AppSettings`] holds both and saves each on its own
 //! debounce, so a sidebar drag never rewrites the preferences file.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,10 +14,14 @@ use anyhow::{Context as _, Result};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use gpui::WindowDecorations;
 use gpui::{
-    App, Bounds, Context, DisplayId, Pixels, Size, Subscription, Task, Window, WindowBounds, point,
-    px, size,
+    App, Bounds, Context, DisplayId, EventEmitter, Pixels, Size, Subscription, Task, Window,
+    WindowBounds, point, px, size,
 };
 use music::WritingSystem;
+use music::equalizer::{self, Gains};
+use music::lyrics::LOCAL;
+use music::scrobble::Account;
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use storage::Database;
@@ -27,28 +31,42 @@ use ui::{
 
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
-use crate::{Repeat, Sonora};
+use crate::{Outcome, Repeat, Sonora, Toasts};
 
 /// Which panel the right sidebar shows.
 /// What the Discord status calls itself. `Provider` asks the provider the track came from, so
-/// local files say Local Music rather than the provider's own name.
+/// local files say Local Music rather than the provider's own name. `ArtistTitle` shows as
+/// "Artist - Title".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum DiscordName {
     #[default]
     Sonora,
     Provider,
     Music,
+    Title,
+    Artist,
+    ArtistTitle,
 }
 
 impl DiscordName {
-    pub const ALL: [Self; 3] = [Self::Sonora, Self::Provider, Self::Music];
+    pub const ALL: [Self; 6] = [
+        Self::Sonora,
+        Self::Provider,
+        Self::Music,
+        Self::Title,
+        Self::Artist,
+        Self::ArtistTitle,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::Sonora => "sonora",
             Self::Provider => "provider",
             Self::Music => "music",
+            Self::Title => "title",
+            Self::Artist => "artist",
+            Self::ArtistTitle => "artist-title",
         }
     }
 
@@ -57,11 +75,52 @@ impl DiscordName {
             Self::Sonora => "settings-discord-name-sonora",
             Self::Provider => "settings-discord-name-provider",
             Self::Music => "settings-discord-name-music",
+            Self::Title => "settings-discord-name-title",
+            Self::Artist => "settings-discord-name-artist",
+            Self::ArtistTitle => "settings-discord-name-artist-title",
         }
     }
 
     pub fn from_id(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|name| name.id() == id)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FullscreenControlsAutohide {
+    #[default]
+    Automatic,
+    AlwaysShown,
+    AlwaysHidden,
+}
+
+impl FullscreenControlsAutohide {
+    pub const ALL: [Self; 3] = [Self::Automatic, Self::AlwaysShown, Self::AlwaysHidden];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Automatic => "automatic",
+            Self::AlwaysHidden => "always-hidden",
+            Self::AlwaysShown => "always-shown",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "automatic" => Self::Automatic,
+            "always-hidden" => Self::AlwaysHidden,
+            "always-shown" => Self::AlwaysShown,
+            _ => Self::Automatic,
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Automatic => "settings-fullscreen-controls-autohide-automatic",
+            Self::AlwaysHidden => "settings-fullscreen-controls-autohide-always-hidden",
+            Self::AlwaysShown => "settings-fullscreen-controls-autohide-always-shown",
+        }
     }
 }
 
@@ -182,15 +241,15 @@ fn system_font() -> String {
 
 /// How long a save waits after the last change, so a slider drag lands as one write.
 const SAVE_DELAY: Duration = Duration::from_millis(300);
+/// How long the watcher waits for `settings.json` to go quiet, so a program that writes it in
+/// several steps is read once, after the last one.
+const RELOAD_DELAY: Duration = Duration::from_millis(150);
 const DEFAULT_VOLUME: f32 = 0.7;
 const DEFAULT_SIDEBAR_WIDTH: f32 = 195.;
 const DEFAULT_SIDEBAR_RIGHT_WIDTH: f32 = 254.;
 const DEFAULT_FONT_SIZE: f32 = 14.;
 const DEFAULT_LYRICS_SCALE: f32 = 1.;
 const DEFAULT_STARTUP: &str = "home";
-/// The shape of `settings.json`. For example, v2 moved runtime state out into `state.sqlite`.
-const SETTINGS_VERSION: u32 = 2;
-
 /// "Whatever the platform uses".
 pub const SYSTEM_FONT: &str = "auto";
 
@@ -208,15 +267,27 @@ struct Held {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 struct Values {
-    version: u32,
     normalisation: bool,
     gapless: bool,
+    equalizer: bool,
+    /// Per band gains in decibels, lowest band first. Kept even while `equalizer` is off, so
+    /// turning it back on restores the curve.
+    equalizer_bands: Vec<f32>,
     sleep_timer: bool,
     discord_presence: bool,
     discord_name: DiscordName,
+    discord_show_paused: bool,
     discord_badge: bool,
     discord_without_details: bool,
+    discord_sonora_button: bool,
+    discord_provider_button: bool,
+    artwork_for_local_files: bool,
     lyrics_for_local_files: bool,
+    prefer_local_lyrics: bool,
+    /// Set once Local has been added to a list saved before it existed, so a user who turns it
+    /// off afterwards is not given it back.
+    local_lyrics_offered: bool,
+    lyrics_providers: Vec<String>,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
     romanized_lyrics: bool,
@@ -226,16 +297,18 @@ struct Values {
     adaptive_menu: bool,
     check_updates: bool,
     close_to_tray: bool,
+    tray_icon: bool,
+    stay_awake: bool,
     language: String,
     #[serde(default = "system_font")]
     font: String,
     startup: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    local_folder: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     local_folders: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     hidden_nav: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    scrobbling: BTreeMap<String, Account>,
     appearance: Appearance,
 }
 
@@ -246,10 +319,19 @@ struct Values {
 struct Appearance {
     theme: String,
     adaptive_theme: bool,
+    ambient: bool,
+    ambient_motion: bool,
     visualizer: bool,
+    visualizer_style: String,
+    /// Whether the visualizer draws the track at its own level rather than at the volume.
+    visualizer_absolute: bool,
     icons: String,
     rounding: String,
+    /// Whether the app paints its frosted treatments. The key kept its old name, which stood
+    /// for a blurred desktop behind the window, so a stored preference carries over.
     blur: bool,
+    /// Whether a see-through window asks the platform to blur the desktop behind it.
+    blur_window: bool,
     font_size: f32,
     transparent: bool,
     transparency: f32,
@@ -268,20 +350,38 @@ struct Appearance {
     motion_pace: String,
     battery_saver: String,
     theme_overrides: ThemeOverrides,
+    fullscreen_controls_autohide: String,
 }
 
 impl Default for Values {
     fn default() -> Self {
         Self {
-            version: SETTINGS_VERSION,
             normalisation: false,
             gapless: true,
+            equalizer: false,
+            equalizer_bands: vec![0.; equalizer::BANDS],
             sleep_timer: false,
             discord_presence: false,
             discord_name: DiscordName::Sonora,
+            discord_show_paused: false,
             discord_badge: false,
             discord_without_details: false,
+            discord_sonora_button: true,
+            discord_provider_button: true,
+            artwork_for_local_files: true,
             lyrics_for_local_files: true,
+            prefer_local_lyrics: false,
+            local_lyrics_offered: false,
+            lyrics_providers: [
+                LOCAL,
+                "Spotify",
+                "YouTube Music",
+                "Apple Music",
+                "Musixmatch",
+                "LrcLib",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
             karaoke_lyrics: true,
             blur_lyrics: true,
             romanized_lyrics: true,
@@ -291,15 +391,25 @@ impl Default for Values {
             adaptive_menu: false,
             check_updates: cfg!(target_os = "windows"),
             close_to_tray: true,
+            tray_icon: true,
+            stay_awake: true,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
-            local_folder: None,
             local_folders: Vec::new(),
             hidden_nav: Vec::new(),
+            scrobbling: BTreeMap::new(),
             appearance: Appearance::default(),
         }
     }
+}
+
+/// One narrowed filter axis as stored per table: a flag that is on, or a range the user
+/// shrank. Whole ranges and flags that are off read as untouched and take no space.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum FilterValue {
+    Flag(bool),
+    Range(f32, f32),
 }
 
 /// Everything `state.sqlite` holds under the `runtime` key: values the app changes on its own
@@ -319,6 +429,7 @@ struct StateValues {
     provider: String,
     tables: HashMap<String, Layout>,
     sorting: HashMap<String, Option<Sorting>>,
+    filters: HashMap<String, HashMap<String, FilterValue>>,
     views: HashMap<String, Mode>,
     pinned: Vec<Held>,
     sidebar_pinned_open: bool,
@@ -345,6 +456,7 @@ impl Default for StateValues {
             provider: "spotify".to_owned(),
             tables: HashMap::new(),
             sorting: HashMap::new(),
+            filters: HashMap::new(),
             views: HashMap::new(),
             pinned: Vec::new(),
             sidebar_pinned_open: false,
@@ -406,10 +518,15 @@ impl Default for Appearance {
         Self {
             theme: "dark".to_owned(),
             adaptive_theme: true,
+            ambient: true,
+            ambient_motion: true,
             visualizer: true,
+            visualizer_style: ui::VisualizerStyle::default().id().to_owned(),
+            visualizer_absolute: false,
             icons: icons::BASE.to_owned(),
             rounding: Rounding::Rounded.id().to_owned(),
             blur: true,
+            blur_window: true,
             font_size: DEFAULT_FONT_SIZE,
             transparent: false,
             transparency: ui::BACKDROP_TRANSPARENCY,
@@ -425,6 +542,7 @@ impl Default for Appearance {
             motion_pace: Pace::default().id().to_owned(),
             battery_saver: Saver::default().id().to_owned(),
             theme_overrides: ThemeOverrides::default(),
+            fullscreen_controls_autohide: FullscreenControlsAutohide::Automatic.id().to_owned(),
         }
     }
 }
@@ -441,7 +559,21 @@ pub struct AppSettings {
     save_state: Option<Task<()>>,
     watch: Option<Subscription>,
     writable: bool,
+    /// What `settings.json` held when it was last read or written, so the watcher can tell our
+    /// own writes from another program's.
+    disk: Option<Vec<u8>>,
+    /// The line of the parse error while `settings.json` does not parse.
+    broken: Option<usize>,
+    /// The watch on the folder holding `settings.json`. Dropping it ends the watch.
+    watcher: Option<RecommendedWatcher>,
+    reload: Option<Task<()>>,
 }
+
+/// Emitted after another program changed `settings.json` and the new values were taken in.
+/// Whoever paints the theme repaints it, since a reload never calls `Theme::set` itself.
+pub struct Reloaded;
+
+impl EventEmitter<Reloaded> for AppSettings {}
 
 impl AppSettings {
     /// Loads from the standard config and data paths.
@@ -459,21 +591,15 @@ impl AppSettings {
                 (None, false)
             }
         };
-        let (mut values, writable) = match bytes.as_deref().map(serde_json::from_slice::<Values>) {
-            Some(Ok(values)) => (values, writable),
-            Some(Err(error)) => {
+        let parsed = bytes.map(|bytes| (serde_json::from_slice::<Values>(&bytes), bytes));
+        let (values, writable, disk, broken) = match parsed {
+            Some((Ok(values), bytes)) => (values, writable, Some(bytes), None),
+            Some((Err(error), _)) => {
                 log::warn!("settings: cannot parse {}: {error}", path.display());
-                (Values::default(), false)
+                (Values::default(), false, None, Some(error.line()))
             }
-            None => (Values::default(), writable),
+            None => (Values::default(), writable, None, None),
         };
-        // A single `local_folder` predates multiple local libraries; fold it into
-        // `local_folders` once and never write the singular field back out.
-        if let Some(folder) = values.local_folder.take()
-            && !values.local_folders.contains(&folder)
-        {
-            values.local_folders.push(folder);
-        }
 
         let state = match store.load() {
             Ok(Some(saved)) => saved,
@@ -483,7 +609,6 @@ impl AppSettings {
                 StateValues::default()
             }
         };
-        values.version = SETTINGS_VERSION;
 
         Self {
             values,
@@ -494,6 +619,23 @@ impl AppSettings {
             save_state: None,
             watch: None,
             writable,
+            disk,
+            broken,
+            watcher: None,
+            reload: None,
+        }
+    }
+
+    /// Tells the user that `settings.json` does not parse and that changes are not saved until
+    /// it does. Does nothing while the file is fine.
+    pub fn report_broken(&self, cx: &mut App) {
+        if let Some(line) = self.broken {
+            Toasts::about(
+                Outcome::Failed,
+                "toast-settings-broken",
+                line.to_string(),
+                cx,
+            );
         }
     }
 
@@ -507,6 +649,18 @@ impl AppSettings {
 
     pub fn gapless(&self) -> bool {
         self.values.gapless
+    }
+
+    pub fn equalizer(&self) -> bool {
+        self.values.equalizer
+    }
+
+    /// The stored curve, padded flat or cut to the band count and clamped into range, so a file
+    /// written by another version still loads.
+    pub fn equalizer_gains(&self) -> Gains {
+        let stored = &self.values.equalizer_bands;
+        let gains = std::array::from_fn(|band| stored.get(band).copied().unwrap_or(0.));
+        equalizer::clamped(&gains)
     }
 
     pub fn sleep_timer(&self) -> bool {
@@ -523,6 +677,11 @@ impl AppSettings {
         self.values.discord_name
     }
 
+    /// Whether the Discord status stays up while the track is paused.
+    pub fn discord_show_paused(&self) -> bool {
+        self.values.discord_show_paused
+    }
+
     /// Whether the Discord status carries the badge of the provider the track came from.
     pub fn discord_badge(&self) -> bool {
         self.values.discord_badge
@@ -533,8 +692,39 @@ impl AppSettings {
         self.values.discord_without_details
     }
 
+    /// Whether the Discord status carries a button that opens the Sonora project page.
+    pub fn discord_sonora_button(&self) -> bool {
+        self.values.discord_sonora_button
+    }
+
+    /// Whether the Discord status carries a button that opens the track on its provider.
+    pub fn discord_provider_button(&self) -> bool {
+        self.values.discord_provider_button
+    }
+
+    /// Whether a local file's artist and album may be sent to a public catalogue to find a cover
+    /// for its Discord status. Streamed tracks are looked up regardless.
+    pub fn artwork_for_local_files(&self) -> bool {
+        self.values.artwork_for_local_files
+    }
+
     pub fn lyrics_for_local_files(&self) -> bool {
         self.values.lyrics_for_local_files
+    }
+
+    pub fn prefer_local_lyrics(&self) -> bool {
+        self.values.prefer_local_lyrics
+    }
+
+    pub fn lyrics_providers(&self) -> &[String] {
+        &self.values.lyrics_providers
+    }
+
+    pub fn lyrics_provider_enabled(&self, provider: &str) -> bool {
+        self.values
+            .lyrics_providers
+            .iter()
+            .any(|name| name == provider)
     }
 
     pub fn karaoke_lyrics(&self) -> bool {
@@ -575,6 +765,29 @@ impl AppSettings {
 
     pub fn close_to_tray(&self) -> bool {
         self.values.close_to_tray
+    }
+
+    pub fn tray_icon(&self) -> bool {
+        self.values.tray_icon
+    }
+
+    /// Whether music keeps the system awake and, in fullscreen, the display.
+    pub fn stay_awake(&self) -> bool {
+        self.values.stay_awake
+    }
+
+    /// Every linked scrobbling account, keyed by its service slug.
+    pub fn scrobbling(&self) -> &BTreeMap<String, Account> {
+        &self.values.scrobbling
+    }
+
+    /// One service's account, blank when it was never linked.
+    pub fn account(&self, service: &str) -> Account {
+        self.values
+            .scrobbling
+            .get(service)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn sidebar_width(&self) -> f32 {
@@ -637,8 +850,40 @@ impl AppSettings {
         self.values.appearance.adaptive_theme
     }
 
-    pub fn visualizer(&self) -> bool {
-        self.values.appearance.visualizer
+    /// Whether fullscreen paints the ambient background sampled from the cover.
+    pub fn ambient(&self) -> bool {
+        self.values.appearance.ambient
+    }
+
+    /// Whether the ambient background drifts. Off leaves it a still gradient, which is what
+    /// the system reduce-motion preference does too.
+    pub fn ambient_motion(&self) -> bool {
+        self.values.appearance.ambient_motion
+    }
+
+    /// Whether the playing cover should colour the theme, given whether fullscreen is up. The
+    /// ambient background is painted out of the tint, so fullscreen tints whatever the adaptive
+    /// theme setting says.
+    pub fn cover_tint(&self, fullscreen: bool) -> bool {
+        self.adaptive_theme() || (fullscreen && self.ambient())
+    }
+
+    /// The visualizer's style, `None` when it is off. The old `visualizer` switch is still the
+    /// off state, so a settings file written before the two were one setting keeps its answer.
+    pub fn visualizer_style(&self) -> ui::VisualizerStyle {
+        match self.values.appearance.visualizer {
+            true => ui::VisualizerStyle::from_id(&self.values.appearance.visualizer_style),
+            false => ui::VisualizerStyle::None,
+        }
+    }
+
+    /// Whether the visualizer ignores Sonora's volume and draws the track at its own level.
+    pub fn visualizer_absolute(&self) -> bool {
+        self.values.appearance.visualizer_absolute
+    }
+
+    pub fn fullscreen_controls_autohide(&self) -> FullscreenControlsAutohide {
+        FullscreenControlsAutohide::from_id(&self.values.appearance.fullscreen_controls_autohide)
     }
 
     pub fn icons(&self) -> &str {
@@ -649,8 +894,13 @@ impl AppSettings {
         &self.values.appearance.rounding
     }
 
+    /// Whether the app paints its frosted treatments. See `ui::blurring`.
     pub fn blur(&self) -> bool {
         self.values.appearance.blur
+    }
+
+    pub fn blur_window(&self) -> bool {
+        self.values.appearance.blur_window
     }
 
     pub fn stillness(&self) -> Stillness {
@@ -677,7 +927,9 @@ impl AppSettings {
             transparent: self.transparent(),
             transparency: self.transparency(),
             blur: self.blur(),
+            blur_window: self.blur_window(),
             tint: None,
+            tint_secondary: None,
         }
     }
 
@@ -735,7 +987,7 @@ impl AppSettings {
     }
 
     /// The path of `settings.json`, written first if it does not exist yet.
-    pub fn ensure_file(&self) -> PathBuf {
+    pub fn ensure_file(&mut self) -> PathBuf {
         if !self.path.exists() {
             self.save_now();
         }
@@ -765,6 +1017,16 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_equalizer(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.values.equalizer = on;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_equalizer_gains(&mut self, gains: &Gains, cx: &mut Context<Self>) {
+        self.values.equalizer_bands = equalizer::clamped(gains).to_vec();
+        self.schedule_save(cx);
+    }
+
     pub fn set_sleep_timer(&mut self, sleep_timer: bool, cx: &mut Context<Self>) {
         self.values.sleep_timer = sleep_timer;
         self.schedule_save(cx);
@@ -780,6 +1042,20 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_fullscreen_controls_autohide(
+        &mut self,
+        fca: FullscreenControlsAutohide,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.appearance.fullscreen_controls_autohide = fca.id().to_owned();
+        self.schedule_save(cx);
+    }
+
+    pub fn set_discord_show_paused(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.discord_show_paused = enabled;
+        self.schedule_save(cx);
+    }
+
     pub fn set_discord_badge(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.discord_badge = enabled;
         self.schedule_save(cx);
@@ -790,8 +1066,37 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_discord_sonora_button(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.discord_sonora_button = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_discord_provider_button(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.discord_provider_button = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_artwork_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.artwork_for_local_files = enabled;
+        self.schedule_save(cx);
+    }
+
     pub fn set_lyrics_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.lyrics_for_local_files = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_prefer_local_lyrics(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.prefer_local_lyrics = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_lyrics_provider(&mut self, provider: &str, enabled: bool, cx: &mut Context<Self>) {
+        self.values.lyrics_providers.retain(|name| name != provider);
+        if enabled {
+            self.values.lyrics_providers.push(provider.to_owned());
+        }
+        self.values.lyrics_providers.sort();
         self.schedule_save(cx);
     }
 
@@ -848,6 +1153,38 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_tray_icon(&mut self, tray_icon: bool, cx: &mut Context<Self>) {
+        self.values.tray_icon = tray_icon;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_stay_awake(&mut self, stay_awake: bool, cx: &mut Context<Self>) {
+        self.values.stay_awake = stay_awake;
+        self.schedule_save(cx);
+    }
+
+    /// Stores a linked account, or forgets the service when the account carries no session.
+    pub fn set_account(&mut self, service: &str, account: Account, cx: &mut Context<Self>) {
+        match account.linked() {
+            true => {
+                self.values.scrobbling.insert(service.to_owned(), account);
+            }
+            false => {
+                self.values.scrobbling.remove(service);
+            }
+        }
+        self.schedule_save(cx);
+    }
+
+    /// Turns submissions to one linked service on or off, leaving the link itself alone.
+    pub fn set_scrobbling(&mut self, service: &str, enabled: bool, cx: &mut Context<Self>) {
+        let Some(account) = self.values.scrobbling.get_mut(service) else {
+            return;
+        };
+        account.enabled = enabled;
+        self.schedule_save(cx);
+    }
+
     pub fn table(&self, table: &str) -> Layout {
         self.state.tables.get(table).cloned().unwrap_or_default()
     }
@@ -881,6 +1218,32 @@ impl AppSettings {
             return;
         }
         self.state.sorting.insert(table.to_owned(), sorting);
+        self.schedule_state_save(cx);
+    }
+
+    /// The narrowed filter axes stored under a table key, if any.
+    pub fn filters(&self, table: &str) -> Option<HashMap<String, FilterValue>> {
+        self.state.filters.get(table).cloned()
+    }
+
+    /// Stores the narrowed filter axes of a table. An empty map drops the entry, so resetting
+    /// a table clears its stored filters on the next store.
+    pub fn set_filters(
+        &mut self,
+        table: &str,
+        filters: HashMap<String, FilterValue>,
+        cx: &mut Context<Self>,
+    ) {
+        if filters.is_empty() {
+            if self.state.filters.remove(table).is_none() {
+                return;
+            }
+        } else {
+            if self.state.filters.get(table) == Some(&filters) {
+                return;
+            }
+            self.state.filters.insert(table.to_owned(), filters);
+        }
         self.schedule_state_save(cx);
     }
 
@@ -1115,8 +1478,28 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_visualizer(&mut self, visualizer: bool, cx: &mut Context<Self>) {
-        self.values.appearance.visualizer = visualizer;
+    pub fn set_ambient(&mut self, ambient: bool, cx: &mut Context<Self>) {
+        self.values.appearance.ambient = ambient;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_ambient_motion(&mut self, motion: bool, cx: &mut Context<Self>) {
+        self.values.appearance.ambient_motion = motion;
+        self.schedule_save(cx);
+    }
+
+    /// Picking a style turns the visualizer on; picking `None` turns it off and leaves the style
+    /// behind it alone, so the old choice comes back with it.
+    pub fn set_visualizer_style(&mut self, style: ui::VisualizerStyle, cx: &mut Context<Self>) {
+        self.values.appearance.visualizer = style.shown();
+        if style.shown() {
+            self.values.appearance.visualizer_style = style.id().to_owned();
+        }
+        self.schedule_save(cx);
+    }
+
+    pub fn set_visualizer_absolute(&mut self, absolute: bool, cx: &mut Context<Self>) {
+        self.values.appearance.visualizer_absolute = absolute;
         self.schedule_save(cx);
     }
 
@@ -1138,6 +1521,11 @@ impl AppSettings {
 
     pub fn set_blur(&mut self, blur: bool, cx: &mut Context<Self>) {
         self.values.appearance.blur = blur;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_blur_window(&mut self, blur: bool, cx: &mut Context<Self>) {
+        self.values.appearance.blur_window = blur;
         self.schedule_save(cx);
     }
 
@@ -1270,7 +1658,7 @@ impl AppSettings {
     }
 
     /// Writes `settings.json` now. Returns false and logs why when it cannot.
-    fn save_now(&self) -> bool {
+    fn save_now(&mut self) -> bool {
         if !self.writable {
             return false;
         }
@@ -1289,11 +1677,120 @@ impl AppSettings {
                 return false;
             }
         };
-        if let Err(error) = fs::write(&self.path, bytes) {
+        if let Err(error) = fs::write(&self.path, &bytes) {
             log::error!("settings: cannot write {}: {error}", self.path.display());
             return false;
         }
+        self.disk = Some(bytes);
         true
+    }
+
+    /// Watches the folder holding `settings.json` and reloads the file when another program
+    /// changes it. The folder is watched rather than the file because many tools replace the
+    /// file by renaming a new one over it, which would end a watch on the file itself.
+    pub fn watch_file(&mut self, cx: &mut Context<Self>) {
+        let (Some(folder), Some(name)) = (self.path.parent(), self.path.file_name()) else {
+            return;
+        };
+        if let Err(error) = fs::create_dir_all(folder) {
+            log::warn!("settings: cannot create {}: {error}", folder.display());
+            return;
+        }
+
+        let (sender, mut changes) = tokio::sync::mpsc::unbounded_channel();
+        let name = name.to_owned();
+        // Opening the file is an event too, so only creates and writes pass. Otherwise each
+        // reload would set off the next.
+        let watcher =
+            notify::recommended_watcher(move |result: notify::Result<Event>| match result {
+                Ok(event) => {
+                    let written = matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_));
+                    let ours = event
+                        .paths
+                        .iter()
+                        .any(|path| path.file_name() == Some(&name));
+                    if written && ours {
+                        sender.send(()).ok();
+                    }
+                }
+                Err(error) => log::warn!("settings: watch failed: {error}"),
+            });
+        let mut watcher = match watcher {
+            Ok(watcher) => watcher,
+            Err(error) => {
+                log::warn!("settings: cannot watch {}: {error}", folder.display());
+                return;
+            }
+        };
+        if let Err(error) = watcher.watch(folder, RecursiveMode::NonRecursive) {
+            log::warn!("settings: cannot watch {}: {error}", folder.display());
+            return;
+        }
+
+        self.watcher = Some(watcher);
+        self.reload = Some(cx.spawn(async move |this, cx| {
+            while changes.recv().await.is_some() {
+                cx.background_executor().timer(RELOAD_DELAY).await;
+                while changes.try_recv().is_ok() {}
+                if this.update(cx, |this, cx| this.reload(cx)).is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
+    /// Takes in a `settings.json` that another program wrote. A file that does not parse keeps
+    /// the current values and holds back our own saves until it parses again, so a half-written
+    /// file is never overwritten. The file on disk also wins over a save still in its debounce.
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                log::warn!("settings: cannot read {}: {error}", self.path.display());
+                return;
+            }
+        };
+        if self.disk.as_ref() == Some(&bytes) {
+            self.writable = true;
+            self.broken = None;
+            return;
+        }
+        let values = match serde_json::from_slice::<Values>(&bytes) {
+            Ok(values) => values,
+            Err(error) => {
+                log::warn!("settings: cannot parse {}: {error}", self.path.display());
+                self.writable = false;
+                self.broken = Some(error.line());
+                self.report_broken(cx);
+                return;
+            }
+        };
+
+        log::info!("settings: reloaded {}", self.path.display());
+        let previous = std::mem::replace(&mut self.values, values);
+        self.disk = Some(bytes);
+        self.writable = true;
+        self.broken = None;
+        self.save = None;
+        self.push_globals(&previous, cx);
+        cx.emit(Reloaded);
+        cx.notify();
+    }
+
+    /// Pushes the globals that the setters push themselves, for whatever a reload changed.
+    fn push_globals(&self, previous: &Values, cx: &mut App) {
+        let (before, now) = (&previous.appearance, &self.values.appearance);
+        if previous.language != self.values.language {
+            i18n::set(i18n::resolve(&self.values.language));
+        }
+        if before.icons != now.icons {
+            icons::set(&now.icons);
+        }
+        if before.reduce_motion != now.reduce_motion || before.motion_pace != now.motion_pace {
+            ui::motion::apply(self.stillness(), self.pace(), cx);
+        }
+        cx.refresh_windows();
     }
 }
 

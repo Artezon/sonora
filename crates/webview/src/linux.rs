@@ -30,6 +30,9 @@ const LIBRARIES: [&str; 2] = ["libwebkit2gtk-4.1.so.0\0", "libwebkit2gtk-4.0.so.
 const TICK: c_uint = 50;
 /// How long a window waits for the GTK thread to reach a display before giving up on it.
 const SETUP: Duration = Duration::from_secs(5);
+/// Where the kernel lists every GPU with a link to the driver bound to it. One of the sysfs
+/// subtrees a Flatpak sandbox shares, unlike `/sys/module` or `/proc/driver`.
+const DRM: &str = "/sys/class/drm";
 
 /// Firefox on Linux. WebKitGTK's own agent claims Safari on X11, a browser that does not exist,
 /// and Google answers a browser it cannot place with "this browser may not be secure".
@@ -43,6 +46,11 @@ const G_SOURCE_CONTINUE: Bool = 1;
 /// the other two backends take every cookie, and a session that dies with the window has no third
 /// party worth keeping out.
 const WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS: c_int = 0;
+/// `WEBKIT_USER_CONTENT_INJECT_TOP_FRAME`: the script runs in the page and in none of its frames.
+const WEBKIT_USER_CONTENT_INJECT_TOP_FRAME: c_int = 0;
+/// `WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START`: before the page's own scripts, which is what a
+/// script that has to intercept one of them needs.
+const WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START: c_int = 0;
 
 type Ptr = *mut c_void;
 type Bool = c_int;
@@ -92,6 +100,9 @@ macro_rules! symbols {
 }
 
 symbols! {
+    gdk_set_allowed_backends: unsafe extern "C" fn(*const c_char),
+    gdk_display_get_default: unsafe extern "C" fn() -> Ptr,
+    g_type_name_from_instance: unsafe extern "C" fn(Ptr) -> *const c_char,
     gtk_disable_setlocale: unsafe extern "C" fn(),
     gtk_init_check: unsafe extern "C" fn(*mut c_int, *mut *mut *mut c_char) -> Bool,
     gtk_main: unsafe extern "C" fn(),
@@ -113,8 +124,13 @@ symbols! {
     webkit_web_context_get_cookie_manager: unsafe extern "C" fn(Ptr) -> Ptr,
     webkit_web_view_new_with_context: unsafe extern "C" fn(Ptr) -> Ptr,
     webkit_web_view_get_settings: unsafe extern "C" fn(Ptr) -> Ptr,
+    webkit_web_view_get_user_content_manager: unsafe extern "C" fn(Ptr) -> Ptr,
+    webkit_user_content_manager_add_script: unsafe extern "C" fn(Ptr, Ptr),
+    webkit_user_script_new: unsafe extern "C" fn(*const c_char, c_int, c_int, *const *const c_char, *const *const c_char) -> Ptr,
+    webkit_user_script_unref: unsafe extern "C" fn(Ptr),
     webkit_web_view_get_uri: unsafe extern "C" fn(Ptr) -> *const c_char,
     webkit_web_view_load_uri: unsafe extern "C" fn(Ptr, *const c_char),
+    webkit_web_view_terminate_web_process: unsafe extern "C" fn(Ptr),
     webkit_settings_set_user_agent: unsafe extern "C" fn(Ptr, *const c_char),
     webkit_cookie_manager_set_accept_policy: unsafe extern "C" fn(Ptr, c_int),
     webkit_cookie_manager_get_cookies: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Ready, Ptr),
@@ -333,7 +349,8 @@ impl Live {
             CString::new(session.target.title.as_str()).context("the window title is not text")?;
         let uri = CString::new(format!("https://{}/", session.target.landing))
             .context("the landing host is not text")?;
-        let agent = CString::new(USER_AGENT).expect("the user agent is a literal");
+        let agent = CString::new(session.target.agent.as_deref().unwrap_or(USER_AGENT))
+            .context("the user agent is not text")?;
 
         // The context is the whole session: dropping it at the end takes the cookies with it.
         let context = unsafe { (api.webkit_web_context_new_ephemeral)() };
@@ -378,7 +395,14 @@ impl Live {
             )
         };
 
-        unsafe { (api.gtk_widget_show_all)(window) };
+        if let Some(source) = &session.target.script {
+            inject(api, view, source);
+        }
+        // A scripted window is never looked at. GTK only needs it mapped for the user to see it,
+        // and WebKit loads a page into an unmapped view all the same, so it stays hidden.
+        if !session.target.scripted() {
+            unsafe { (api.gtk_widget_show_all)(window) };
+        }
         unsafe { (api.webkit_web_view_load_uri)(view, url.as_ptr()) };
 
         Ok(Self {
@@ -402,6 +426,11 @@ impl Live {
         if state.dismissed {
             // `destroy` runs the handler that sets `closed`, which must not hold the lock.
             drop(state);
+            // Destroying the widget and dropping the context is not enough: WebKit keeps the web
+            // process alive afterwards, and with it the whole page it had loaded, which for the
+            // minting page is most of a gigabyte. Killing it is the only thing that gives that
+            // back, and the view is on its way out anyway.
+            unsafe { (api.webkit_web_view_terminate_web_process)(self.view) };
             unsafe { (api.gtk_widget_destroy)(self.window) };
             return true;
         }
@@ -454,6 +483,35 @@ fn load() -> Option<Api> {
     None
 }
 
+/// Adds a user script to a view, to run in every page it loads once that page's own scripts have.
+/// The script is copied into the content manager, so the one built here is released straight away.
+fn inject(api: &'static Api, view: Ptr, source: &str) {
+    let Ok(source) = CString::new(source) else {
+        log::warn!("webview: the page script is not text");
+        return;
+    };
+    let manager = unsafe { (api.webkit_web_view_get_user_content_manager)(view) };
+    if manager.is_null() {
+        log::warn!("webview: the view has no content manager, the page script will not run");
+        return;
+    }
+    let script = unsafe {
+        (api.webkit_user_script_new)(
+            source.as_ptr(),
+            WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
+            WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START,
+            ptr::null(),
+            ptr::null(),
+        )
+    };
+    if script.is_null() {
+        log::warn!("webview: cannot build the page script");
+        return;
+    }
+    unsafe { (api.webkit_user_content_manager_add_script)(manager, script) };
+    unsafe { (api.webkit_user_script_unref)(script) };
+}
+
 /// Resolves one symbol. `dlsym` searches the handle's dependencies too, which is how gtk, glib and
 /// soup are reached without naming a soname for any of them.
 unsafe fn symbol<T>(handle: Ptr, name: &str) -> Option<T> {
@@ -485,10 +543,40 @@ fn gtk(api: &'static Api) -> &'static Host {
 /// Initialises GTK, then alternates between parking and running a main loop for as long as there
 /// are windows. Never returns unless GTK itself refuses to start.
 fn run(api: &'static Api, host: &'static Host) {
+    // GDK opens its own connection to whichever server it finds, Wayland first and X11 through
+    // XWayland otherwise, so the sign-in window never depends on an XWayland being present. A
+    // GDK_BACKEND in the environment outranks this list, which is fine: either name works.
+    unsafe { (api.gdk_set_allowed_backends)(c"wayland,x11".as_ptr()) };
+    // WebKit's DMA-BUF renderer hands the compositor buffers the NVIDIA driver allocates, and
+    // the compositor answers with a protocol error that takes the whole process down. WebKit
+    // upstream declined to detect the driver itself (bug 262607), so every embedder does. Shared
+    // memory is slower and only ever paints a sign-in page. A value the user exported wins.
+    // SAFETY: nothing else in the process reads this variable, and no other thread is in GTK yet.
+    if nvidia() && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        log::debug!("webview: nvidia driver loaded, disabling the dmabuf renderer");
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+    }
     // gtk_init would otherwise move the whole process onto the user's locale.
     unsafe { (api.gtk_disable_setlocale)() };
     if unsafe { (api.gtk_init_check)(ptr::null_mut(), ptr::null_mut()) } == 0 {
         return host.fail("cannot reach the display server".to_string());
+    }
+    // SAFETY: the display GTK just opened outlives the thread, and its type name is static.
+    let backend = unsafe {
+        let display = (api.gdk_display_get_default)();
+        match display.is_null() {
+            true => String::new(),
+            false => CStr::from_ptr((api.g_type_name_from_instance)(display))
+                .to_string_lossy()
+                .into_owned(),
+        }
+    };
+    log::debug!("webview: gdk opened {backend}");
+    // On X11 WebKit tries to share a GL context with the main process and paints nothing; the
+    // compositing env var has no public setting equivalent. Wayland needs the compositor on.
+    // SAFETY: nothing else in the process reads this variable.
+    if backend == "GdkX11Display" {
+        unsafe { std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1") };
     }
     host.running();
     loop {
@@ -585,6 +673,19 @@ unsafe fn read(api: &'static Api, list: *mut Node) -> Vec<Cookie> {
         node = unsafe { (*node).next };
     }
     cookies
+}
+
+/// Whether any GPU is bound to the NVIDIA driver, proprietary or open. Nouveau binds under its
+/// own name and is not counted. A sysfs that cannot be read answers false, so a stripped
+/// container keeps the accelerated path rather than losing the window.
+fn nvidia() -> bool {
+    let Ok(cards) = std::fs::read_dir(DRM) else {
+        return false;
+    };
+    cards
+        .flatten()
+        .filter_map(|card| std::fs::read_link(card.path().join("device/driver")).ok())
+        .any(|driver| driver.file_name().is_some_and(|name| name == "nvidia"))
 }
 
 /// Copies a borrowed C string. The caller keeps nothing of the original.

@@ -7,6 +7,8 @@ mod http;
 mod logging;
 mod memory;
 mod single;
+#[cfg(windows)]
+mod thumbbar;
 mod tray;
 
 use std::path::PathBuf;
@@ -85,8 +87,10 @@ fn main() {
         let database = storage::Database::standard();
         let providers: Vec<Arc<dyn music::MusicProvider>> = vec![
             Arc::new(music::spotify::SpotifyProvider::from_env()),
+            Arc::new(music::apple::AppleProvider::new()),
             Arc::new(music::youtube::YouTubeProvider::new()),
             Arc::new(music::subsonic::SubsonicProvider::new()),
+            Arc::new(music::deezer::DeezerProvider::new()),
         ];
         let local_provider: Arc<dyn music::MusicProvider> =
             Arc::new(music::local::LocalProvider::new(
@@ -94,8 +98,12 @@ fn main() {
                     .unwrap_or_else(std::env::temp_dir)
                     .join("sonora"),
                 database.clone(),
+                storage::Cache::standard(),
             ));
         let lyrics: Vec<Arc<dyn LyricsProvider>> = vec![
+            Arc::new(music::local::LocalLyrics),
+            Arc::new(music::spotify::SpotifyLyrics::from_env()),
+            Arc::new(music::youtube::YouTubeLyrics::new()),
             Arc::new(music::binimum::Binimum::new()),
             Arc::new(music::musixmatch::Musixmatch::new()),
             Arc::new(music::lrclib::LrcLib::new()),
@@ -211,9 +219,32 @@ fn follow(items: &[String], cx: &mut App) {
 /// With" launch or drop hands us across platforms.
 fn local_path_from_arg(arg: &str) -> Option<PathBuf> {
     match arg.strip_prefix("file://") {
-        Some(rest) => Some(PathBuf::from(percent_decode(rest))),
+        Some(rest) => Some(PathBuf::from(file_uri_path(rest))),
         None => Some(PathBuf::from(arg)),
     }
+}
+
+/// A `file://` URI body turned into a filesystem path. Windows `file:///C:/…`
+/// keeps a slash in front of the drive, which is not a path the OS will open.
+fn file_uri_path(rest: &str) -> String {
+    let decoded = percent_decode(rest);
+    let path = decoded
+        .strip_prefix("localhost")
+        .or_else(|| decoded.strip_prefix("LOCALHOST"))
+        .unwrap_or(decoded.as_str());
+    #[cfg(windows)]
+    {
+        if let Some(drive) = path.strip_prefix('/')
+            && drive
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic)
+            && drive.as_bytes().get(1) == Some(&b':')
+        {
+            return drive.to_owned();
+        }
+    }
+    path.to_owned()
 }
 
 fn percent_decode(value: &str) -> String {
@@ -223,7 +254,8 @@ fn percent_decode(value: &str) -> String {
     while i < bytes.len() {
         if bytes[i] == b'%'
             && i + 2 < bytes.len()
-            && let Ok(byte) = u8::from_str_radix(&value[i + 1..i + 3], 16)
+            && let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
+            && let Ok(byte) = u8::from_str_radix(hex, 16)
         {
             out.push(byte);
             i += 3;
@@ -254,15 +286,21 @@ fn open_window(cx: &mut App) {
     let Sonora {
         session,
         cover: _,
+        drm: _,
         library,
         history: _,
         lyrics: _,
+        network: _,
         pins: _,
         playback,
+        potoken: _,
         queue,
+        scan: _,
+        scrobbling: _,
         settings: _,
         updates: _,
         usage: _,
+        wake: _,
     } = Sonora::global(cx);
     let (session, library, playback, queue) = (
         session.clone(),
@@ -284,7 +322,7 @@ fn open_window(cx: &mut App) {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let decorations = settings.window_decorations();
     let look = settings.look();
-    let background = ui::backdrop(look.blur, look.transparent);
+    let background = ui::backdrop(look.blur_window, look.transparent);
 
     cx.open_window(
         WindowOptions {
@@ -312,7 +350,12 @@ fn open_window(cx: &mut App) {
                 window,
                 Sonora::global(cx).settings.read(cx).window_rounding(),
             );
-            state::attach_remote(platform_handle(window), cx);
+            let handle = platform_handle(window);
+            state::attach_remote(handle, cx);
+            #[cfg(windows)]
+            if let Some(handle) = handle {
+                thumbbar::install(window.window_handle().window_id(), handle, cx);
+            }
             state::remember_window(window, cx);
             cx.new(|cx| Root::new(session, library, playback, queue, window, cx))
         },
@@ -366,19 +409,25 @@ fn platform_handle(window: &gpui::Window) -> Option<*mut std::ffi::c_void> {
     Some(handle)
 }
 
+// DWM draws the caption buttons behind the client area, where an opaque window hides them
+// and a transparent or blurred one shows them beside Sonora's own. They come with
+// `WS_SYSMENU`, so that is the style to drop: `WS_CAPTION` has to stay, because DWM only
+// animates minimize, restore and close on a window that carries it. Alt+F4 and the taskbar
+// still close the window; only the Alt+Space menu goes, and Sonora's title bar has no use
+// for it.
 #[cfg(target_os = "windows")]
 fn hide_system_caption(handle: *mut std::ffi::c_void) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_CAPTION,
+        SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_SYSMENU,
     };
 
     unsafe {
         let style = GetWindowLongPtrW(handle, GWL_STYLE);
-        if style & WS_CAPTION as isize == 0 {
+        if style & WS_SYSMENU as isize == 0 {
             return;
         }
-        SetWindowLongPtrW(handle, GWL_STYLE, style & !(WS_CAPTION as isize));
+        SetWindowLongPtrW(handle, GWL_STYLE, style & !(WS_SYSMENU as isize));
         SetWindowPos(
             handle,
             std::ptr::null_mut(),
@@ -436,4 +485,16 @@ unsafe extern "system" fn work_area(
 #[cfg(not(target_os = "windows"))]
 fn platform_handle(_window: &gpui::Window) -> Option<*mut std::ffi::c_void> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_percent_before_a_multibyte_letter_stays_in_the_path() {
+        assert_eq!(percent_decode("%가나"), "%가나");
+        assert_eq!(percent_decode("%a가"), "%a가");
+        assert_eq!(percent_decode("a%20b%EA%B0%80"), "a b가");
+    }
 }

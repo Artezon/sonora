@@ -51,6 +51,9 @@ library-no-catalog-albums = Альбомы не найдены
 library-no-catalog-artists = Исполнители не найдены
 library-no-matches = Ничего не найдено
 library-not-loaded = Библиотека не загрузилась
+library-scanning = Просматриваю ваши папки…
+library-scanning-found = Просматриваю ваши папки… пока { $found }
+library-scanning-progress = Читаю вашу музыку… { $read } из { $found }
 library-part-not-loaded = Этот раздел библиотеки не загрузился
 library-local-unconfigured = Настройте локальную библиотеку
 
@@ -72,6 +75,11 @@ app-close-window = Закрыть окно
 app-minimize = Свернуть
 app-zoom = Изменить масштаб
 
+# tray menu
+tray-show = Показать Sonora
+tray-play = Воспроизвести
+tray-pause = Пауза
+
 # table columns
 column-played-at = Прослушано
 column-index = #
@@ -90,31 +98,84 @@ column-tracks = Треки
 
 # track menu
 menu-add-to-playlist = Добавить в плейлист
+menu-add-tracks-to-playlist = { $count ->
+    [one] Добавить { $count } трек в плейлист
+    [few] Добавить { $count } трека в плейлист
+   *[other] Добавить { $count } треков в плейлист
+}
 menu-new-playlist = Новый плейлист
 menu-edit-tags = Изменить теги
 menu-no-playlists = Нет плейлистов
 menu-add-to-library = В избранное
+menu-add-tracks-to-library = { $count ->
+    [one] Добавить { $count } трек в избранное
+    [few] Добавить { $count } трека в избранное
+   *[other] Добавить { $count } треков в избранное
+}
 menu-remove-from-library = Убрать из избранного
+menu-remove-tracks-from-library = { $count ->
+    [one] Убрать { $count } трек из избранного
+    [few] Убрать { $count } трека из избранного
+   *[other] Убрать { $count } треков из избранного
+}
 menu-remove-from-playlist = Удалить из плейлиста
+menu-remove-tracks-from-playlist = { $count ->
+    [one] Удалить { $count } трек из плейлиста
+    [few] Удалить { $count } трека из плейлиста
+   *[other] Удалить { $count } треков из плейлиста
+}
 menu-remove-from-history = Удалить из истории
+menu-remove-tracks-from-history = { $count ->
+    [one] Удалить { $count } трек из истории
+    [few] Удалить { $count } трека из истории
+   *[other] Удалить { $count } треков из истории
+}
 menu-play-next = Воспроизвести следующим
+menu-play-tracks-next = { $count ->
+    [one] Воспроизвести { $count } трек следующим
+    [few] Воспроизвести { $count } трека следующими
+   *[other] Воспроизвести { $count } треков следующими
+}
 menu-add-to-queue = Добавить в очередь
+menu-add-tracks-to-queue = { $count ->
+    [one] Добавить { $count } трек в очередь
+    [few] Добавить { $count } трека в очередь
+   *[other] Добавить { $count } треков в очередь
+}
+menu-play-last = Воспроизвести в конце
+menu-play-tracks-last = { $count ->
+    [one] Воспроизвести { $count } трек в конце
+    [few] Воспроизвести { $count } трека в конце
+   *[other] Воспроизвести { $count } треков в конце
+}
 menu-song-radio = Радио по треку
 menu-go-to-album = Перейти к альбому
 menu-go-to-artist = Перейти к исполнителю
 menu-view-details = Подробнее
 menu-copy-link = Копировать ссылку
+menu-cut = Вырезать
+menu-copy = Копировать
+menu-paste = Вставить
+menu-select-all = Выделить всё
 menu-remove-from-queue = Убрать из очереди
-menu-open-playlist = Открыть плейлист
-menu-play-playlist = Воспроизвести плейлист
 menu-rename-playlist = Переименовать плейлист
 menu-delete-playlist = Удалить плейлист
 menu-add-playlist-to-library = Добавить в медиатеку
 menu-remove-playlist-from-library = Удалить из медиатеки
+menu-library-add = Добавить в медиатеку
+menu-library-add-tracks = { $count ->
+    [one] Добавить { $count } трек в медиатеку
+    [few] Добавить { $count } трека в медиатеку
+   *[other] Добавить { $count } треков в медиатеку
+}
+menu-library-remove = Удалить из медиатеки
+menu-library-remove-tracks = { $count ->
+    [one] Удалить { $count } трек из медиатеки
+    [few] Удалить { $count } трека из медиатеки
+   *[other] Удалить { $count } треков из медиатеки
+}
 menu-make-playlist-public = Сделать публичным
 menu-make-playlist-private = Сделать приватным
-menu-open-album = Открыть альбом
-menu-play-album = Воспроизвести альбом
 menu-play-artist = Воспроизвести исполнителя
 
 # playlist editor
@@ -127,17 +188,54 @@ playlist-again-title = Добавить ещё раз?
 playlist-again-confirm = Этот трек уже есть в «{ $name }». Добавить копию?
 playlist-again-add = Добавить ещё раз
 
+# confirm
+confirm-remove-library-title = Убрать из медиатеки
+confirm-remove-playlist-title = Удалить из плейлиста
+confirm-remove-history-title = Удалить из истории
+confirm-remove-songs = { $count ->
+    [one] Убрать этот трек из медиатеки?
+    [few] Убрать { $count } трека из медиатеки?
+   *[other] Убрать { $count } треков из медиатеки?
+}
+confirm-remove-playlist-songs = { $count ->
+    [one] Удалить этот трек из плейлиста?
+    [few] Удалить { $count } трека из плейлиста?
+   *[other] Удалить { $count } треков из плейлиста?
+}
+confirm-remove-history-songs = { $count ->
+    [one] Удалить этот трек из истории прослушиваний?
+    [few] Удалить { $count } трека из истории прослушиваний?
+   *[other] Удалить { $count } треков из истории прослушиваний?
+}
+confirm-remove-albums = { $count ->
+    [one] Убрать этот альбом из медиатеки?
+    [few] Убрать { $count } альбома из медиатеки?
+   *[other] Убрать { $count } альбомов из медиатеки?
+}
+confirm-remove-artists = { $count ->
+    [one] Убрать этого исполнителя из избранного?
+    [few] Убрать { $count } исполнителей из избранного?
+   *[other] Убрать { $count } исполнителей из избранного?
+}
+confirm-remove-playlists = { $count ->
+    [one] Убрать этот плейлист из медиатеки?
+    [few] Убрать { $count } плейлиста из медиатеки?
+   *[other] Убрать { $count } плейлистов из медиатеки?
+}
+
 # queue panel
 queue-title = Очередь
 queue-history = История
 queue-now-playing = Сейчас играет
 queue-from = Из
+queue-next-in-queue = Следующие в очереди
 queue-up-next = Далее
 queue-reset = Сбросить
 queue-clear = Очистить
 queue-empty = Очередь пуста
 queue-similar = Похожие треки
 queue-radio = Автовоспроизведение похожих треков
+queue-return-playing = К текущему треку
 
 # player bar
 player-nothing-playing = Ничего не играет
@@ -169,6 +267,7 @@ filter-year = Год
 filter-explicit = Только с ненормативной лексикой
 filter-playable = Только доступные
 filter-favorites = Только избранное
+filter-owned = Ваши
 
 # view
 view-list = Список
@@ -187,21 +286,30 @@ login-signed-in = Вы вошли как { $name }
 login-failed-title = Не удалось войти
 login-problem-region = Spotify не открывает сессию из страны, где вы находитесь. Войдите из домашней страны или смените страну в аккаунте Spotify.
 login-problem-credentials = Сохранённая сессия Spotify больше недействительна. Войдите заново.
-login-problem-network = Sonora не смогла связаться со Spotify. Проверьте интернет-соединение и попробуйте снова.
+login-problem-network = Sonora не смогла связаться с музыкальным сервисом. Проверьте интернет-соединение и попробуйте снова.
 login-problem-cancelled = Вы закрыли страницу браузера, не подтвердив вход. Начните заново.
 login-problem-refused = Spotify отклонил вход. Подождите немного и попробуйте снова.
 login-problem-premium = Sonora воспроизводит музыку через Spotify Premium, а у этого аккаунта его нет. Войдите в аккаунт с Premium, чтобы продолжить.
 login-sign-in = Войти через { $provider }
 login-connect-cookies = Вставить cookie вручную
-login-cookie-open = Открыть YouTube Music
+login-cookie-open = Открыть { $provider }
 login-cookie-submit = Продолжить
 login-cookie-hint = Вставьте сюда заголовок запроса Cookie
-login-cookie-step-1 = Откройте music.youtube.com и убедитесь, что вы вошли в аккаунт.
+login-cookie-step-1 = Откройте music.youtube.com и убедитесь, что вы вошли в аккаунт. Лучше всего работает окно в режиме инкогнито.
 login-cookie-step-2 = Нажмите F12, откройте вкладку «Сеть» и перезагрузите страницу.
 login-cookie-step-3 = Выберите любой запрос с именем «browse» или «next».
 login-cookie-step-4 = На вкладке «Заголовки» найдите Cookie в заголовках запроса, щёлкните правой кнопкой и скопируйте значение.
 login-cookie-step-note = Вставьте значение целиком: панели «Куки» недостаточно, потому что значение должно содержать SAPISID и __Secure-3PAPISID.
-login-cookie-title = Вставьте cookie YouTube Music, чтобы завершить вход
+login-cookie-header-title = Вставьте cookie { $provider }, чтобы завершить вход
+login-cookie-apple-step-3 = Выберите любой запрос к { $site }.
+login-cookie-apple-note = Вставьте значение целиком: оно должно содержать { $cookie }.
+login-cookie-named-title = Вставьте cookie { $provider }, чтобы завершить вход
+login-cookie-named-hint = Вставьте сюда значение cookie
+login-cookie-named-step-1 = Откройте { $site } и убедитесь, что вы вошли в аккаунт.
+login-cookie-named-step-2 = Нажмите F12 и откройте вкладку Хранилище в Firefox или Application в Chrome.
+login-cookie-named-step-3 = Раскройте Cookies, выберите { $site } и найдите cookie с именем { $cookie }.
+login-cookie-named-step-4 = Дважды щёлкните по его значению и скопируйте его.
+login-cookie-named-note = Достаточно одного значения { $cookie }. Целый заголовок Cookie из вкладки Сеть тоже подойдёт.
 login-window-title = Вход в { $provider }
 login-use = Открыть { $provider }
 login-guest-title = Гостевой режим
@@ -217,6 +325,8 @@ login-password-hint = Пароль
 login-server-submit = Подключиться
 login-account-title = Выберите аккаунт
 login-account-detail = В этой сессии выполнен вход в несколько аккаунтов Google. Выберите тот, который должна использовать Sonora.
+login-choose-title = Вход в { $provider }
+login-choose-detail = Выберите способ входа в { $provider }.
 
 # album and playlist pages
 detail-album = Альбом
@@ -250,6 +360,10 @@ artist-filter-all = Все
 artist-filter-albums = Альбомы
 artist-filter-singles = Синглы
 artist-filter-eps = EP
+artist-appears-on = Появляется в
+album-also-like = Вам также может понравиться
+album-tab-albums = Альбомы
+album-tab-artists = Артисты
 
 # user profile page
 user-eyebrow = Профиль
@@ -277,8 +391,6 @@ release-meta = { $year } • { $kind }
 
 # home page
 home-quick-picks = Быстрый выбор
-home-listen-again = Послушать снова
-home-quick-picks-eyebrow = Начните с трека
 home-quick-picks-empty = Добавьте несколько треков, и они появятся здесь
 
 # search page
@@ -389,6 +501,7 @@ month-11 = ноя.
 month-12 = дек.
 
 # settings
+settings-search = Поиск по настройкам
 settings-tab-general = Общие
 settings-tab-appearance = Внешний вид
 settings-tab-playback = Воспроизведение
@@ -402,8 +515,18 @@ settings-opacity-value = { $percent }%
 settings-theme-config = Открыть конфиг
 settings-adaptive = Адаптивная тема
 settings-adaptive-detail = Подкрашивать палитру обложкой играющего альбома
+settings-ambient = Атмосферный фон
+settings-ambient-detail = Заливать полноэкранный режим цветами обложки
+settings-ambient-motion = Движение фона
+settings-ambient-motion-detail = Плавно двигать цвета фона, а не держать их неподвижными
 settings-visualizer = Визуализатор
-settings-visualizer-detail = Показывать столбики спектра позади обложки в полноэкранном режиме
+settings-visualizer-detail = Как рисуется спектр позади обложки в полноэкранном режиме
+settings-visualizer-style-none = Выключен
+settings-visualizer-style-bars = Столбики
+settings-visualizer-style-wave = Волна
+settings-visualizer-style-both = Столбики и волна
+settings-fullscreen-controls-autohide = Скрывать элементы управления
+settings-fullscreen-controls-autohide-detail = Плавно убирать элементы управления, когда в полноэкранном режиме нет действий
 settings-icons = Набор значков
 settings-icons-detail = Выберите набор значков для интерфейса
 settings-motion = Меньше анимации
@@ -414,8 +537,10 @@ settings-saver = Энергосбережение
 settings-saver-detail = Ограничивать частоту кадров анимации, когда Sonora не в фокусе, начиная со следующего запуска
 settings-corners = Углы
 settings-corners-detail = Насколько скруглены поверхности и элементы
-settings-blur = Размытие
-settings-blur-detail = Рисует окно поверх размытого рабочего стола. Нужна непрозрачность ниже 100%
+settings-blur = Размытие интерфейса
+settings-blur-detail = Матовое стекло для меню и плавающих элементов
+settings-blur-window = Размытие окна
+settings-blur-window-detail = Рисует окно поверх размытого рабочего стола. Нужна непрозрачность ниже 100%
 settings-font = Размер шрифта
 settings-font-detail = Базовый размер текста, остальное масштабируется вместе с ним
 settings-font-value = { $size } px
@@ -445,24 +570,95 @@ settings-window-rounding = Скругление окна
 settings-window-rounding-detail = Насколько скруглены углы окна
 settings-controls-side = Сторона кнопок
 settings-controls-side-detail = С какой стороны заголовка расположены кнопки
+settings-close-to-tray = Играть после закрытия
+settings-close-to-tray-detail = Оставлять Sonora в системном трее и продолжать воспроизведение после закрытия окна
+settings-discord = Показывать в Discord
+settings-discord-detail = Показывать трек, который вы слушаете, в профиле Discord
+settings-discord-name = Название статуса
+settings-discord-name-detail = Как называется статус после «Слушает», который видят ваши друзья
+settings-discord-name-sonora = Sonora
+settings-discord-name-provider = Сервис
+settings-discord-name-music = Музыка
+settings-discord-name-title = Название
+settings-discord-name-artist = Исполнитель
+settings-discord-name-artist-title = Исполнитель - Название
+settings-discord-show-paused = Показывать на паузе
+settings-discord-show-paused-detail = Оставлять статус в профиле Discord, пока трек на паузе
+settings-discord-badge = Значок сервиса
+settings-discord-badge-detail = Отмечать статус маленьким значком сервиса, откуда взят трек
+settings-discord-anonymous = Скрыть подробности
+settings-discord-anonymous-detail = Сообщать только о том, что играет музыка, без названия, исполнителя и обложки
+settings-discord-buttons = Кнопки
+settings-discord-buttons-detail = Ссылки под статусом, которые могут открыть ваши друзья: одна на трек в его сервисе, другая на Sonora
+settings-discord-buttons-pick = Выбрать кнопки
+# the Discord status when the track is left out of it
+discord-listening = Слушает музыку
+get-sonora = Скачать Sonora
+settings-fullscreen-controls-autohide-automatic = Автоматически
+settings-fullscreen-controls-autohide-always-hidden = Всегда скрыты
+settings-fullscreen-controls-autohide-always-shown = Всегда видны
 settings-normalisation = Нормализация громкости
 settings-normalisation-detail = Держит треки на одинаковой громкости
 settings-gapless = Воспроизведение без пауз
 settings-gapless-detail = Переводит трек в следующий без паузы, как задумано в альбоме
+settings-sleep = Таймер сна
+settings-sleep-detail = Музыка сама остановится через заданное время, чтобы вы уснули под неё
 settings-sleep-configure = Настроить…
 settings-sleep-off = Выкл
 settings-sleep-end-of-track = В конце трека
 settings-sleep-minutes = { $count } мин
+settings-widevine = Модуль Widevine
+settings-widevine-detail = Треки Apple Music зашифрованы и требуют модуля Widevine от Google. Sonora берёт копию, которая уже есть у браузера, или ту, что скачала у Google с вашего согласия.
+settings-widevine-none = Треки Apple Music зашифрованы и требуют модуля Widevine от Google. Ни у одного браузера здесь его нет, поэтому Sonora может скачать его у Google с вашего согласия.
+settings-widevine-looking = Поиск…
+settings-widevine-asking = Ждём вашего ответа
+settings-widevine-fetching = Скачивание…
+settings-widevine-installing = Установка…
+settings-widevine-installed = Найден в браузере
+settings-widevine-fetched = Скачан у Google
+settings-widevine-missing = Не установлен
+settings-widevine-configured = Задан через окружение
+settings-widevine-fetch = Скачать
+settings-widevine-uninstall = Удалить
+confirm-uninstall-widevine-title = Удалить модуль Widevine?
+confirm-uninstall-widevine = Sonora удалит копию, скачанную у Google. Треки Apple Music перестанут играть, пока модуль не будет скачан снова.
+widevine-prompt-title = Модуль Widevine
+widevine-prompt-wanted = Треки Apple Music зашифрованы и требуют модуля Widevine от Google. Ни у одного браузера на этом компьютере его нет. Sonora может скачать его с серверов Google, тот же файл, что ставит Chrome, и хранить в своей папке.
+widevine-prompt-downloading = Скачивание…
+widevine-prompt-terms = Версия { $version } скачана. Установка означает согласие с условиями Google для этого модуля:
+widevine-prompt-installing = Установка…
+widevine-prompt-download = Скачать
+widevine-prompt-later = Не сейчас
+widevine-prompt-accept = Принять и установить
+widevine-prompt-decline = Отклонить
 settings-panel-lyrics-size = Размер текста песни (панель)
 settings-panel-lyrics-size-detail = Размер строк текста песни на боковой панели поверх базового размера шрифта
 settings-fullscreen-lyrics-size = Размер текста песни (полный экран)
 settings-fullscreen-lyrics-size-detail = Размер строк текста песни в полноэкранном плеере поверх базового размера шрифта
 settings-lyrics-size-value = { $size } %
+settings-lyrics-for-local-files = Текст для локальных файлов
+settings-lyrics-for-local-files-detail = Искать текст в интернете по метаданным локальных файлов
 settings-karaoke-lyrics = Караоке-текст
 settings-karaoke-lyrics-detail = Подсвечивать текст по словам, когда есть тайминги
+settings-blur-lyrics = Размывать неактивные строки
+settings-blur-lyrics-detail = Размывать следующие и предыдущие строки в панели текста
 settings-romanized-lyrics = Романизация текста
 settings-romanized-lyrics-detail = Показывать локально собранное произношение для выбранных систем письма
 settings-romanization-writing-systems = Системы письма
+settings-lyrics-providers = Источники текстов песен
+settings-lyrics-providers-detail = Выберите сервисы для поиска текстов песен
+settings-lyrics-providers-selected = { $count ->
+    [one] Выбран { $count } источник
+    [few] Выбрано { $count } источника
+   *[other] Выбрано { $count } источников
+    }
+settings-lyrics-provider-spotify = Spotify
+settings-lyrics-provider-youtube = YouTube Music
+settings-lyrics-provider-apple-music = Apple Music
+settings-lyrics-provider-musixmatch = Musixmatch
+settings-lyrics-provider-lrclib = LRCLIB
+settings-lyrics-provider-kugou = Kugou
+settings-lyrics-provider-netease = NetEase
 settings-romanization-japanese = Японское письмо
 settings-romanization-chinese = Китайское письмо
 settings-romanization-korean = Корейское письмо
@@ -471,12 +667,36 @@ settings-romanization-greek = Греческое письмо
 settings-romanization-arabic = Арабское письмо
 settings-romanization-other = Другие системы письма
 settings-advanced = Дополнительно
+settings-group-window = Окно
 settings-group-accounts = Аккаунты
 settings-group-library = Медиатека
 settings-group-text = Текст
 settings-group-motion = Анимация
+settings-group-fullscreen = Полноэкранный режим
 settings-group-title-bar = Заголовок окна
 settings-group-window-style = Стиль окна
+settings-equalizer = Эквалайзер
+settings-equalizer-detail = Меняет звучание по десяти полосам, по одной на октаву
+settings-equalizer-preset = Пресет
+settings-equalizer-preset-detail = Готовая кривая для полос ниже
+settings-equalizer-custom = Своя
+settings-equalizer-flat = Ровная
+settings-equalizer-bass-boost = Больше басов
+settings-equalizer-bass-reducer = Меньше басов
+settings-equalizer-treble-boost = Больше высоких
+settings-equalizer-vocal = Вокал
+settings-equalizer-rock = Рок
+settings-equalizer-pop = Поп
+settings-equalizer-jazz = Джаз
+settings-equalizer-classical = Классика
+settings-equalizer-electronic = Электроника
+settings-equalizer-acoustic = Акустика
+settings-equalizer-loudness = Громкость
+settings-equalizer-decibels = { $db } дБ
+settings-equalizer-hertz = { $hz } Гц
+settings-equalizer-kilohertz = { $khz } кГц
+settings-group-equalizer = Эквалайзер
+settings-group-discord = Discord
 settings-group-lyrics = Текст песни
 settings-group-project = Проект
 settings-adaptive-menu = Адаптивное контекстное меню
@@ -489,12 +709,37 @@ settings-provider-current = Воспроизведение из этого се�
 settings-provider-guest = Воспроизведение в гостевом режиме
 settings-provider-switch = Переключиться
 settings-sign-out = Выйти
+settings-group-scrobbling = Скробблинг
+settings-lastfm = Last.fm
+settings-lastfm-detail = Sonora скробблит через ваш собственный API-аккаунт Last.fm. Создайте его и вставьте сюда ключ и секрет.
+settings-librefm = Libre.fm
+settings-listenbrainz = ListenBrainz
+settings-listenbrainz-detail = Вставьте пользовательский токен со страницы настроек ListenBrainz.
+settings-maloja = Maloja
+settings-maloja-detail = Укажите адрес вашего сервера Maloja и вставьте один из его API-ключей.
+settings-scrobble-off = Не подключено
+settings-scrobble-on = Подключено
+settings-scrobble-waiting = Ожидание браузера…
+settings-scrobble-as = Скробблинг как { $name }
+settings-scrobble-failed = Не удалось подключиться
+settings-scrobble-connect = Подключить
+settings-scrobble-disconnect = Отключить
+settings-scrobble-title = Подключить { $service }
+settings-scrobble-request = Получить API-ключ
+settings-scrobble-token-request = Получить токен
+settings-scrobble-key = API-ключ
+settings-scrobble-secret = API-секрет
+settings-scrobble-token = Пользовательский токен
+settings-scrobble-server = Адрес сервера
 settings-local-folder = Папки с музыкой
 settings-local-folder-empty = Не настроено
 settings-choose-folder = Выбрать папку…
 settings-add-folder = Добавить папку
 settings-remove-folder = Удалить папку
 settings-rescan = Пересканировать
+settings-scan-walking = Сканирую…
+settings-scan-progress = { $percent }%
+settings-scan-done = Готово за { $seconds } с
 settings-tab-about = О программе
 settings-version = Версия
 settings-version-detail = Сборка Sonora, которая сейчас запущена
@@ -553,18 +798,24 @@ toast-playlist-busy = Другое изменение ещё выполняет�
 toast-playlist-signed-out = Войдите, чтобы менять плейлисты
 toast-queued-track = { $name } добавлен в очередь
 toast-next-track = { $name } прозвучит следующим
+toast-last-track = { $name } прозвучит в конце
 toast-queued-album = Альбом добавлен в очередь
 toast-next-album = Альбом прозвучит следующим
+toast-last-album = Альбом прозвучит в конце
 toast-queued-playlist = Плейлист добавлен в очередь
 toast-next-playlist = Плейлист прозвучит следующим
+toast-last-playlist = Плейлист прозвучит в конце
 toast-queued-artist = Исполнитель добавлен в очередь
 toast-next-artist = Исполнитель прозвучит следующим
+toast-last-artist = Исполнитель прозвучит в конце
 toast-queue-failed = Не удалось добавить в очередь
 toast-keys-refused = Spotify не выдаёт этому аккаунту ключи воспроизведения
 toast-sign-in-to-play = { $name } отдаёт музыку только тем, кто вошёл в аккаунт
 toast-track-unplayable = Не удалось воспроизвести { $name }
 toast-library-add-failed = Не удалось добавить { $name } в медиатеку
 toast-library-remove-failed = Не удалось удалить { $name } из медиатеки
+toast-library-added = Добавлено в медиатеку
+toast-library-removed = Удалено из медиатеки
 
 # lyrics
 lyrics-title = Текст
@@ -587,6 +838,9 @@ update-working = Загружаем обновление…
 update-failed = Не удалось установить обновление. Попробуйте со страницы релизов.
 settings-check-updates = Проверять обновления
 settings-check-updates-detail = Один раз при запуске спрашивать GitHub, вышла ли новая версия. Sonora устанавливает обновление сама только в Windows, в остальных системах показывает, что изменилось
+settings-log = Файл журнала
+settings-log-detail = Что Sonora записала во время работы. Приложите его к отчёту об ошибке
+settings-log-open = Открыть журнал
 tags-edit-title = Изменение тегов
 tags-sheet-song = Трек
 tags-sheet-album = Альбом
@@ -609,10 +863,16 @@ toast-tags-saved = Теги «{ $name }» сохранены
 toast-tags-failed = Не удалось сохранить теги
 
 nav-pin = Закрепить
-toast-library-pin-limit = Достигнут лимит закреплений Spotify. Сначала открепите другой элемент.
 toast-library-pin-failed = Не удалось изменить закрепление в Spotify.
 nav-nothing-pinned = Здесь пусто
 nav-pins-alphabetical = По алфавиту
 nav-pins-kind = По типу
 nav-show-full-library = Показывать всю медиатеку
 nav-return-top = Наверх
+
+# trouble
+trouble-offline = Нет соединения
+trouble-offline-detail = Проверьте подключение к интернету и попробуйте снова.
+trouble-not-loaded = Не удалось загрузить
+trouble-retry = Повторить
+toast-offline = Нет соединения. Ничего не будет воспроизводиться, пока оно не вернётся.

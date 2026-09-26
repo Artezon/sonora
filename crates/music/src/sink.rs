@@ -1,4 +1,4 @@
-//! The output queue both providers feed. A decoder runs on its own thread and hands finished
+//! The output queue every engine feeds. A decoder runs on its own thread and hands finished
 //! samples to `Paced`, which appends them to the shared rodio output and blocks the writer once
 //! enough is queued. Nothing here decodes or reaches the network, so the audio thread never
 //! waits on either.
@@ -13,8 +13,7 @@ use rodio::buffer::SamplesBuffer;
 use rodio::{ChannelCount, SampleRate, Source};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-use crate::audio::{Output, Volume};
-use crate::spectrum::Spectrum;
+use crate::audio::{Chain, Output};
 
 /// How many packets stay queued before a write blocks. This is what paces the decoder to real
 /// time; deeper rides out network hiccups, but the decoder's position runs this far ahead of
@@ -24,6 +23,8 @@ const QUEUED_CHUNKS: usize = 26;
 const DRAIN_POLL: Duration = Duration::from_millis(10);
 /// How often a write asks the system whether the default device changed.
 const DEVICE_POLL: Duration = Duration::from_millis(500);
+/// How often a watch looks for an output device to come back once none could be opened.
+const WATCH_POLL: Duration = Duration::from_secs(1);
 
 /// What the cue does with the next write. It rides in an `AtomicU8`, so it converts at that
 /// boundary and stays a type everywhere else.
@@ -214,13 +215,8 @@ pub struct Paced {
 
 impl Paced {
     /// Claims the default output device, paused until the caller starts it.
-    pub fn open(
-        cue: Cue,
-        volume: Volume,
-        spectrum: Spectrum,
-        changed: UnboundedSender<()>,
-    ) -> Result<Self> {
-        let output = Output::open(volume, spectrum)?;
+    pub fn open(cue: Cue, chain: Chain, changed: UnboundedSender<()>) -> Result<Self> {
+        let output = Output::open(chain)?;
         output.sink().pause();
 
         Ok(Self {
@@ -270,6 +266,29 @@ impl Paced {
         self.live.load(Ordering::Relaxed) > QUEUED_CHUNKS
     }
 
+    /// Whether everything queued has played out or been retired. A queue on a stream that has
+    /// failed or closed never plays out, so it counts as drained.
+    pub fn drained(&self) -> bool {
+        self.live.load(Ordering::Relaxed) == 0 || self.output.failed()
+    }
+
+    /// Whether packets at `rate` can go out without the output reopening.
+    pub fn fits(&self, rate: u32) -> bool {
+        self.output.fits(rate)
+    }
+
+    /// Reopens the output for packets at `rate` unless it fits already. Anything still queued
+    /// is dropped, so a caller that wants the tail heard waits for `drained` first.
+    pub fn fit(&mut self, rate: u32) -> Result<(), Gone> {
+        match self.output.fit(rate) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                log::error!("sink: cannot reopen the audio output: {error:#}");
+                Err(self.disconnected())
+            }
+        }
+    }
+
     /// Waits until there is room for another packet.
     pub fn drain(&mut self) -> Result<(), Gone> {
         while self.full() {
@@ -304,6 +323,26 @@ impl Paced {
         self.changed.send(()).ok();
         Gone
     }
+}
+
+/// Waits for an output device to come back and then tells `notify`, which the engine takes the
+/// way it takes the default device changing: it reopens the output and reloads where it was.
+/// This is what an engine that could not open a device at all waits on. A machine whose only
+/// device has gone, a Bluetooth headset that dropped its link, has nothing to reopen on and
+/// nothing else asks the system again, so without the watch playback stays silent until the app
+/// restarts. The watch ends when the engine listening on `notify` is gone.
+pub fn watch_for_output(notify: UnboundedSender<()>) {
+    std::thread::spawn(move || {
+        while !notify.is_closed() {
+            std::thread::sleep(WATCH_POLL);
+            if !crate::audio::available() {
+                continue;
+            }
+            log::info!("sink: an output device is available again, reopening");
+            notify.send(()).ok();
+            return;
+        }
+    });
 }
 
 /// A packet of interleaved samples at one rate, ready for the queue.

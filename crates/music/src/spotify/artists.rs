@@ -10,7 +10,7 @@ use protobuf::{EnumOrUnknown, Message as _};
 
 use crate::spotify::collection2::SavedItem;
 use crate::spotify::{albums, collection, collection2, pathfinder, wire};
-use crate::{Album, Artist, ArtistProfile, ReleaseType, SavedArtist, Track};
+use crate::{Album, Artist, ArtistCatalogue, ArtistProfile, ReleaseType, SavedArtist, Track};
 
 const ARTIST_PREFIX: &str = "spotify:artist:";
 const ALBUM_PREFIX: &str = "spotify:album:";
@@ -18,36 +18,56 @@ const TRACK_PREFIX: &str = "spotify:track:";
 const LARGE_PORTRAIT: i32 = 300;
 const UNKNOWN: &str = "Unknown";
 const TOP_TRACKS: usize = 30;
-const MINED_RELEASES: usize = 40;
+/// How many releases the ranking reads the tracks of. A release holds ten or so tracks, so
+/// this hands the sort well over the thirty it keeps, and every release past that is a read
+/// of an album nothing will show.
+const MINED_RELEASES: usize = 12;
 
 pub async fn artist(session: &Session, artist_id: &str) -> Result<Artist> {
     match pathfinder::artist(session, artist_id).await {
-        Ok(overview) => return overview_artist(session, artist_id, overview).await,
+        Ok(overview) => return overview_artist(session, overview).await,
         Err(error) => log::warn!("artists: cannot load Pathfinder artist: {error:#}"),
     }
 
     legacy_artist(session, artist_id).await
 }
 
+/// The whole discography and the popular tracks mined from it, which the page fills in once
+/// the overview is already up. Neither can hold up the first frame: a prolific artist has
+/// well over a thousand releases, and ranking the rest of the catalogue reads the tracks of
+/// forty of them. `known` is what the overview already ranked, so nothing on the page is
+/// listed twice.
+pub async fn catalogue(
+    session: &Session,
+    artist_id: &str,
+    known: Vec<Track>,
+) -> Result<ArtistCatalogue> {
+    let albums = discography(session, artist_id).await?;
+    if albums.is_empty() {
+        return Ok(ArtistCatalogue::default());
+    }
+    let top_tracks = deepened(session, known, &albums).await;
+
+    Ok(ArtistCatalogue {
+        albums,
+        top_tracks,
+        ..Default::default()
+    })
+}
+
 pub async fn profile(session: &Session, artist_id: &str) -> Result<ArtistProfile> {
     Ok(profile_from(&metadata(session, artist_id).await?))
 }
 
-async fn overview_artist(
-    session: &Session,
-    artist_id: &str,
-    overview: pathfinder::Overview,
-) -> Result<Artist> {
+/// The artist as the overview alone describes it: the profile, the tracks it ranked and the
+/// releases it happened to carry. The rest of the discography is `catalogue`'s job.
+async fn overview_artist(session: &Session, overview: pathfinder::Overview) -> Result<Artist> {
     let track_uris: Vec<_> = overview.tracks.iter().map(|(uri, _)| uri.clone()).collect();
-    let tracks = async {
-        match track_uris.is_empty() {
-            true => Ok(HashMap::<String, Track>::new()),
-            false => collection::metadata(session, &track_uris).await,
-        }
+    let mut known_tracks = match track_uris.is_empty() {
+        true => HashMap::<String, Track>::new(),
+        false => collection::metadata(session, &track_uris).await?,
     };
-    let (tracks, discography) = tokio::join!(tracks, discography(session, artist_id));
-    let mut known_tracks = tracks?;
-    let ranked = overview
+    let top_tracks = overview
         .tracks
         .into_iter()
         .filter_map(|(uri, playcount)| {
@@ -56,15 +76,6 @@ async fn overview_artist(
             Some(track)
         })
         .collect();
-    let albums = match discography {
-        Ok(releases) if !releases.is_empty() => releases,
-        Ok(_) => overview.albums,
-        Err(error) => {
-            log::warn!("artists: cannot read the discography: {error:#}");
-            overview.albums
-        }
-    };
-    let top_tracks = deepened(session, ranked, &albums).await;
 
     Ok(Artist {
         name: overview.name,
@@ -75,30 +86,26 @@ async fn overview_artist(
             .filter(|biography| !biography.is_empty()),
         monthly_listeners: overview.monthly_listeners,
         top_tracks,
-        albums,
+        albums: overview.albums,
     })
 }
 
+/// What the artist protobuf alone says, for when Pathfinder cannot answer. The releases are
+/// left to `catalogue` here too, so a failed overview still draws a page at the same speed.
 async fn legacy_artist(session: &Session, artist_id: &str) -> Result<Artist> {
     let message = metadata(session, artist_id).await?;
 
     let track_uris = top_track_uris(&message, &session.country());
-    let tracks = async {
-        match track_uris.is_empty() {
-            true => Ok(HashMap::<String, Track>::new()),
-            false => collection::metadata(session, &track_uris).await,
-        }
+    let known_tracks = match track_uris.is_empty() {
+        true => HashMap::<String, Track>::new(),
+        false => collection::metadata(session, &track_uris).await?,
     };
-    let (tracks, releases) = tokio::join!(tracks, releases(session, &message));
-    let known_tracks = tracks?;
-    let ranked = track_uris
+    let top_tracks = track_uris
         .iter()
         .filter_map(|uri| known_tracks.get(uri).cloned())
         .collect();
-    let releases = releases?;
-    let top_tracks = deepened(session, ranked, &releases).await;
 
-    Ok(artist_from(&message, top_tracks, releases))
+    Ok(artist_from(&message, top_tracks, Vec::new()))
 }
 
 async fn deepened(session: &Session, ranked: Vec<Track>, releases: &[Album]) -> Vec<Track> {
@@ -153,7 +160,9 @@ async fn popular(session: &Session, releases: &[Album], known: &[Track]) -> Resu
     Ok(rest)
 }
 
-async fn discography(session: &Session, artist_id: &str) -> Result<Vec<Album>> {
+/// Every release of an artist, newest first: the albums tab of an album page reads its
+/// more-from-the-artist half off this.
+pub(crate) async fn discography(session: &Session, artist_id: &str) -> Result<Vec<Album>> {
     let message = metadata(session, artist_id).await?;
     releases(session, &message).await
 }
@@ -191,8 +200,8 @@ async fn metadata(session: &Session, artist_id: &str) -> Result<ArtistMessage> {
     ArtistMessage::parse_from_bytes(&body).context("cannot decode artist metadata protobuf")
 }
 
-pub async fn saved_artists(session: &Session, limit: u32) -> Result<Vec<SavedArtist>> {
-    let items = followed(session, limit as usize).await?;
+pub async fn saved_artists(session: &Session) -> Result<Vec<SavedArtist>> {
+    let items = followed(session).await?;
     if items.is_empty() {
         return Ok(Vec::new());
     }
@@ -213,14 +222,14 @@ pub async fn saved_artists(session: &Session, limit: u32) -> Result<Vec<SavedArt
         .collect())
 }
 
-async fn followed(session: &Session, limit: usize) -> Result<Vec<SavedItem>> {
-    match collection2::saved_items(session, collection2::ARTISTS, ARTIST_PREFIX, limit).await {
+async fn followed(session: &Session) -> Result<Vec<SavedItem>> {
+    match collection2::saved_items(session, collection2::ARTISTS, ARTIST_PREFIX).await {
         Ok(items) if !items.is_empty() => return Ok(items),
         Ok(_) => log::debug!("artists: the followed set is empty, reading the collection set"),
         Err(error) => log::warn!("artists: cannot read the followed set: {error:#}"),
     }
 
-    collection2::saved_items(session, collection2::COLLECTION, ARTIST_PREFIX, limit).await
+    collection2::saved_items(session, collection2::COLLECTION, ARTIST_PREFIX).await
 }
 
 pub async fn images(session: &Session, ids: &[String]) -> Result<HashMap<String, String>> {

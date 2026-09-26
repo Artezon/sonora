@@ -38,6 +38,7 @@ MAP = {
     "folder-plus": ("folder-plus", "add-folder-linear", "folder-add-line"),
     "funnel": ("filter", "filter-linear", "filter-3-line"),
     "guitar": (None, None, None),
+    "hat-glasses": ("glasses", "glasses-linear", "glasses-line"),
     "heart": ("heart", "heart-linear", "heart-3-line"),
     "heart-filled": ("heart-solid", "heart-bold", "heart-3-fill"),
     "heart-off": (None, None, None),
@@ -50,6 +51,8 @@ MAP = {
     "list-end": (None, "list-arrow-down-linear", None),
     "list-music": ("playlist", "playlist-linear", "play-list-line"),
     "list-plus": ("playlist-plus", "list-arrow-up-linear", "play-list-add-line"),
+    "list-start": (None, None, None),
+    "lock": ("lock", "lock-linear", "lock-line"),
     "log-out": ("log-out", "logout-2-linear", "logout-box-r-line"),
     "maximize": ("expand", "maximize-square-3-linear", "fullscreen-line"),
     "mic-off": ("microphone-mute", None, "mic-off-line"),
@@ -57,6 +60,7 @@ MAP = {
     "moon": ("half-moon", "moon-linear", "moon-line"),
     "music": ("music-double-note", "music-note-linear", "music-2-line"),
     "music-2": ("music-note", "music-note-2-linear", "music-line"),
+    "palette": ("palette", "palette-2-linear", "palette-line"),
     "panel-left-close": ("sidebar-collapse", "sidebar-minimalistic-linear", "menu-fold-line"),
     "panel-left-open": ("sidebar-expand", "sidebar-linear", "menu-unfold-line"),
     "pause": ("pause", "pause-linear", "pause-line"),
@@ -79,6 +83,7 @@ MAP = {
     "skip-back": ("skip-prev", "skip-previous-linear", "skip-back-line"),
     "skip-forward": ("skip-next", "skip-next-linear", "skip-forward-line"),
     "sliders-horizontal": ("control-slider", "slider-horizontal-linear", "equalizer-line"),
+    "square-plus": ("plus-square", "add-square-linear", "add-box-line"),
     "text-select": (None, "text-selection-linear", None),
     "trash-2": ("trash", "trash-bin-minimalistic-linear", "delete-bin-line"),
     "undo-2": ("undo", "undo-left-round-linear", "arrow-go-back-line"),
@@ -89,6 +94,7 @@ MAP = {
     "volume-2": ("sound-high", "volume-loud-linear", "volume-up-line"),
     "volume-off": ("sound-off", "volume-cross-linear", "volume-mute-line"),
     "volume-x": ("sound-off", "volume-cross-linear", "volume-mute-line"),
+    "wifi-off": ("wifi-off", None, "wifi-off-line"),
     "x": ("xmark", "close-linear", "close-line"),
 }
 
@@ -98,6 +104,7 @@ MIRROR = {
 }
 
 SLASH = {
+    "library-big-off": "library-big",
     "mic-off": "mic-vocal",
 }
 

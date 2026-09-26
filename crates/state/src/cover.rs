@@ -110,7 +110,10 @@ impl Cover {
                             cx.notify();
                         }
                     }
-                    Err(error) => log::warn!("cover: cannot load {id}: {error:#}"),
+                    Err(error) => {
+                        log::warn!("cover: cannot load {id}: {error:#}");
+                        crate::noted(&error, cx);
+                    }
                 }
             })
             .ok();

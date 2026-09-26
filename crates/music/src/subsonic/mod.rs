@@ -1,7 +1,6 @@
 mod auth;
 mod client;
 mod playback;
-mod stream;
 mod wire;
 
 use std::sync::Arc;
@@ -12,7 +11,7 @@ use async_trait::async_trait;
 pub use client::SubsonicClient;
 
 use crate::subsonic::playback::Factory;
-use crate::{MusicApi as _, MusicProvider, ProviderSession, Shape, SignIn};
+use crate::{Capabilities, MusicApi as _, MusicProvider, ProviderSession, Shape, SignIn};
 
 pub struct SubsonicProvider;
 
@@ -50,7 +49,7 @@ impl SubsonicProvider {
             playback: Arc::new(Factory::new(client)),
             shape: Shape::Catalog,
             authenticated: true,
-            playcounts: true,
+            capabilities: Capabilities::ALL,
         })
     }
 
@@ -78,8 +77,9 @@ impl SubsonicProvider {
                 playback: Arc::new(Factory::new(client)),
                 shape: Shape::Catalog,
                 authenticated: true,
-                playcounts: true,
+                capabilities: Capabilities::ALL,
             })),
+            Err(error) if crate::trouble::offline(&format!("{error:#}")) => Err(error),
             Err(error) => {
                 log::warn!("subsonic: the stored session is no longer usable: {error:#}");
                 Ok(None)
@@ -118,6 +118,17 @@ impl MusicProvider for SubsonicProvider {
 
     fn location(&self) -> Option<String> {
         auth::load().map(|credentials| credentials.server)
+    }
+
+    /// The configured server's host, since a self-hosted library has no address in common with
+    /// anyone else's.
+    fn reach(&self) -> Option<String> {
+        let server = auth::load()?.server;
+        let host = server
+            .split_once("://")
+            .map_or(server.as_str(), |(_, rest)| rest);
+        let host = host.split(['/', ':', '?']).next()?;
+        (!host.is_empty()).then(|| host.to_owned())
     }
 
     async fn restore(&self) -> Result<Option<ProviderSession>> {

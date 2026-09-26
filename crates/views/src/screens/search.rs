@@ -14,18 +14,21 @@ use ui::Input;
 
 use crate::chrome::Chrome;
 use crate::shared::menus::{ItemMenu, album_menu, artist_menu, playlist_menu};
-use state::{AlbumHit, ArtistHit, Genres, Hit, Kind, Playback, PlaylistHit, Search, Sonora};
+use state::{
+    AlbumHit, ArtistHit, Genres, Hit, Kind, Network, Playback, PlaylistHit, Search, Sonora,
+};
 use ui::ActiveTheme as _;
 use ui::{
     Activate, Card, Deck, Deselect, Pinnable, Popup, Room, Scrollbar, Scroller, SelectLeft,
-    SelectNext, SelectPrevious, SelectRight, Separator, Text, Theme, VAST, Viewport, clock,
-    eyebrow, scrolled, snapped, vacant,
+    SelectNext, SelectPrevious, SelectRight, Separator, Text, Theme, VAST, clock, eyebrow,
+    scrolled, snapped, tabular, vacant,
 };
 
 use crate::shared::cards;
 use crate::shared::cells;
 use crate::shared::pins::Pinned as _;
 use crate::shared::shelves;
+use crate::shared::trouble;
 
 const RAIL: Pixels = gpui::px(12.);
 const ROW_GAP: f32 = 0.25;
@@ -142,7 +145,7 @@ impl SearchView {
             albums: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             mixed: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             browsing: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
-            track_menu: ItemMenu::new(playlist_scrollbar),
+            track_menu: ItemMenu::new(playlist_scrollbar, cx),
             context_menu: None,
             focus: cx.focus_handle(),
             cursor: None,
@@ -338,7 +341,8 @@ impl SearchView {
             return cards::released(
                 format!("album-artist-{place}"),
                 album.year,
-                album.artist_refs.clone(),
+                None,
+                &album.artist_refs,
                 album.artists.clone(),
                 theme,
             )
@@ -413,6 +417,7 @@ impl SearchView {
                             .whitespace_nowrap()
                             .text_size(theme.text(Text::Small))
                             .text_color(theme.muted_foreground)
+                            .font_features(tabular())
                             .child(clock(track.duration)),
                     )
                     .press(pressed(Press::Song(Box::new(track.clone())), me))
@@ -563,15 +568,49 @@ impl SearchView {
         )
     }
 
-    fn failure(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let reason = self.search.read(cx).error()?.to_owned();
+    /// The page search shows in place of its results. Nothing here works without the network,
+    /// so the No connection state covers the whole screen the moment it is gone, and a failed
+    /// search or a failed browse shows its own reason otherwise. Asking again is the retry,
+    /// since neither loader counts a failure as served.
+    fn failure(&self, asked: bool, gutter: Pixels, cx: &Context<Self>) -> Option<AnyElement> {
+        let offline = Network::lost(cx);
+        let (id, reason, retry) = match asked {
+            true => {
+                let reason = match offline {
+                    true => None,
+                    false => Some(self.search.read(cx).error()?.to_owned()),
+                };
+                let search = self.search.clone();
+                let query = search.read(cx).query().to_owned();
+                let retry: Box<dyn Fn(&mut App)> = Box::new(move |cx| {
+                    search.update(cx, |search, cx| search.ask(&query, cx));
+                });
+                ("search-lost", reason, retry)
+            }
+            false => {
+                let reason = match offline {
+                    true => None,
+                    false => Some(self.genres.read(cx).error()?.to_owned()),
+                };
+                let genres = self.genres.clone();
+                let retry: Box<dyn Fn(&mut App)> = Box::new(move |cx| {
+                    genres.update(cx, |genres, cx| genres.load(cx));
+                });
+                ("search-browse-lost", reason, retry)
+            }
+        };
 
         Some(
-            div()
-                .flex_none()
-                .text_color(cx.theme().danger)
-                .child(reason)
-                .into_any_element(),
+            trouble::lost(
+                id,
+                t!("trouble-not-loaded"),
+                reason.as_deref(),
+                move |_, _, cx| retry(cx),
+            )
+            .flex_1()
+            .min_h_0()
+            .px(gutter)
+            .into_any_element(),
         )
     }
 
@@ -606,15 +645,11 @@ impl SearchView {
     }
 
     fn browse(&self, gutter: Pixels, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let error = self.genres.read(cx).error().map(str::to_owned);
         let found = self.genres.read(cx).genres();
         let theme = *cx.theme();
         let pad = theme.metrics.inset;
         let width = cells::content_width(window, pad * 2., cx);
-        let scroll = self.browsing.read(cx).scroll().clone();
-        let seen = scroll.bounds().size.height;
-        let viewport = Viewport::measured(scrolled(&scroll), seen, window);
-        let plates = shelves::grid("genre", found, width, viewport, window, cx);
+        let plates = shelves::grid("genre", found, width, window, cx);
 
         div()
             .flex()
@@ -623,13 +658,6 @@ impl SearchView {
             .min_h_0()
             .gap_3()
             .child(div().px(gutter).child(eyebrow(t!("search-browse"), cx)))
-            .children(error.map(|error| {
-                div()
-                    .flex_none()
-                    .px(gutter)
-                    .text_color(theme.danger)
-                    .child(SharedString::from(error))
-            }))
             .child(
                 Scroller::new("search-browse", &self.browsing)
                     .px(gutter)
@@ -703,17 +731,10 @@ impl SearchView {
         let theme = *cx.theme();
         let row = snapped(theme.metrics.list_row, window);
         let scroll = bar.read(cx).scroll().clone();
-        let seen = scroll.bounds().size.height;
-        let above = match lead.is_some() {
-            true => self.lead.get(),
-            false => Pixels::ZERO,
-        };
-        let viewport = Viewport::measured(scrolled(&scroll) - above, seen, window);
         let me = cx.entity().downgrade();
         let measured = self.lead.clone();
         let tracked = scroll.clone();
         let deck = Deck::new(format!("{id}-deck"))
-            .viewport(viewport)
             .rows((0..seats.len()).map(|_| row))
             .gap(theme.font_size * ROW_GAP)
             .when(lead.is_some(), |deck| {
@@ -955,11 +976,14 @@ impl Render for SearchView {
         let context_menu = self.context_menu.clone().map(|(target, position)| {
             let menu = match target {
                 HitMenu::Song(track) => self.track_menu.for_track(&track, cx),
-                HitMenu::Album(hit) => {
-                    album_menu(album_of(&hit, cx), self.playback.clone(), false, cx)
-                }
+                HitMenu::Album(hit) => album_menu(
+                    album_of(&hit, cx),
+                    self.playback.clone(),
+                    &self.track_menu,
+                    cx,
+                ),
                 HitMenu::Playlist(hit) => {
-                    playlist_menu(playlist_of(&hit, cx), self.playback.clone(), false, cx)
+                    playlist_menu(playlist_of(&hit, cx), self.playback.clone(), cx)
                 }
                 HitMenu::Artist(hit) => {
                     artist_menu(artist_of(&hit, cx), self.playback.clone(), false, cx)
@@ -973,20 +997,23 @@ impl Render for SearchView {
         });
 
         let gutter = pad + inset;
-        let results = match (asked, stacked) {
-            (false, _) => self.browse(gutter, window, cx),
-            (true, true) => self.everything(gutter, window, cx),
-            (true, false) => div()
-                .flex()
-                .flex_1()
-                .min_h_0()
-                .px(gutter)
-                .child(self.column(Kind::Song, window, cx))
-                .child(Separator::vertical())
-                .child(self.column(Kind::Artist, window, cx))
-                .child(Separator::vertical())
-                .child(self.column(Kind::Album, window, cx))
-                .into_any_element(),
+        let results = match self.failure(asked, gutter, cx) {
+            Some(failure) => failure,
+            None => match (asked, stacked) {
+                (false, _) => self.browse(gutter, window, cx),
+                (true, true) => self.everything(gutter, window, cx),
+                (true, false) => div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .px(gutter)
+                    .child(self.column(Kind::Song, window, cx))
+                    .child(Separator::vertical())
+                    .child(self.column(Kind::Artist, window, cx))
+                    .child(Separator::vertical())
+                    .child(self.column(Kind::Album, window, cx))
+                    .into_any_element(),
+            },
         };
 
         div()
@@ -1009,10 +1036,6 @@ impl Render for SearchView {
                     .flex_none()
                     .px(gutter)
                     .child(self.input.clone()),
-            )
-            .children(
-                self.failure(cx)
-                    .map(|failure| div().px(gutter).child(failure)),
             )
             .when(!stacked, |this| {
                 this.children(self.best(cx).map(|best| div().px(gutter).child(best)))

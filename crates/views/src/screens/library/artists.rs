@@ -76,7 +76,7 @@ impl ArtistSource {
             playback.play_origin(played.clone(), cx)
         });
 
-        cells::index(cell, state, true, None, press, cx)
+        cells::index(cell, state, true, None, None, press, cx)
     }
 
     pub(super) fn at(&self, row: usize, cx: &App) -> Option<SavedArtist> {
@@ -113,7 +113,7 @@ impl TableSource for ArtistSource {
         })
     }
 
-    fn filter_axes(&self, _query: &str, cx: &App) -> Vec<Filter> {
+    fn filter_axes(&self, cx: &App) -> Vec<Filter> {
         match self.catalog(cx) {
             true => vec![Filter::Flag(FlagAxis {
                 key: "filter-favorites",

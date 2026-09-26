@@ -41,10 +41,14 @@ library-play-liked-songs = Tocar
 library-no-songs = Nenhuma favorita ainda
 library-no-albums = Nenhum álbum salvo ainda
 library-no-playlists = Nenhuma playlist ainda
+library-no-artists = Nenhum artista favorito ainda
 library-no-local-songs = Nenhuma música importada encontrada
 library-no-local-albums = Nenhum álbum importado encontrado
 library-no-local-artists = Nenhum artista importado encontrado
 library-no-local-playlists = Nenhuma playlist local ainda
+library-no-catalog-songs = Nenhuma música encontrada
+library-no-catalog-albums = Nenhum álbum encontrado
+library-no-catalog-artists = Nenhum artista encontrado
 library-no-matches = Nenhum resultado
 library-not-loaded = Sua biblioteca não carregou
 library-part-not-loaded = Esta parte da sua biblioteca não carregou
@@ -67,6 +71,11 @@ app-window = Janela
 app-close-window = Fechar janela
 app-minimize = Minimizar
 app-zoom = Zoom
+
+# tray menu
+tray-show = Mostrar Sonora
+tray-play = Tocar
+tray-pause = Pausar
 
 # table columns
 column-played-at = Tocada em
@@ -133,16 +142,12 @@ menu-copy = Copiar
 menu-paste = Colar
 menu-select-all = Selecionar tudo
 menu-remove-from-queue = Remover da fila
-menu-open-playlist = Abrir playlist
-menu-play-playlist = Tocar playlist
 menu-rename-playlist = Renomear playlist
 menu-delete-playlist = Excluir playlist
 menu-add-playlist-to-library = Adicionar à Biblioteca
 menu-remove-playlist-from-library = Remover da Biblioteca
 menu-make-playlist-public = Tornar pública
 menu-make-playlist-private = Tornar privada
-menu-open-album = Abrir álbum
-menu-play-album = Tocar álbum
 menu-play-artist = Tocar artista
 
 # playlist editor
@@ -175,6 +180,10 @@ confirm-remove-albums = { $count ->
     [one] Remover este álbum da sua biblioteca?
    *[other] Remover { $count } álbuns da sua biblioteca?
 }
+confirm-remove-artists = { $count ->
+    [one] Remover este artista das Favoritas?
+   *[other] Remover { $count } artistas das Favoritas?
+}
 confirm-remove-playlists = { $count ->
     [one] Remover esta playlist da sua biblioteca?
    *[other] Remover { $count } playlists da sua biblioteca?
@@ -191,6 +200,7 @@ queue-clear = Limpar
 queue-empty = Sua fila está vazia
 queue-similar = Faixas semelhantes
 queue-radio = Reprodução automática de faixas semelhantes
+queue-return-playing = Voltar ao que está tocando
 
 # player bar
 player-nothing-playing = Nada tocando
@@ -221,6 +231,8 @@ filter-duration = Duração
 filter-year = Ano
 filter-explicit = Explícitas apenas
 filter-playable = Reproduzíveis apenas
+filter-favorites = Apenas favoritas
+filter-owned = Suas
 
 # view
 view-list = Lista
@@ -239,21 +251,19 @@ login-signed-in = Conectado como { $name }
 login-failed-title = Falha no login
 login-problem-region = O Spotify não abrirá uma sessão do país onde você está. Faça login do seu país de origem ou altere o país na sua conta do Spotify.
 login-problem-credentials = Sua sessão salva do Spotify não é mais válida. Faça login novamente para continuar.
-login-problem-network = O Sonora não conseguiu acessar o Spotify. Verifique sua conexão com a internet e tente novamente.
+login-problem-network = O Sonora não conseguiu acessar o serviço de música. Verifique sua conexão com a internet e tente novamente.
 login-problem-cancelled = Você fechou a página do navegador antes de aprovar o login. Recomece para finalizar.
 login-problem-refused = O Spotify recusou o login. Aguarde um momento e tente novamente.
 login-problem-premium = O Sonora usa o Spotify Premium para reproduzir, e esta conta não possui o plano. Faça login com uma conta Premium para continuar.
 login-sign-in = Entrar com { $provider }
 login-connect-cookies = Colar cookies manualmente
-login-cookie-open = Abrir YouTube Music
 login-cookie-submit = Continuar
 login-cookie-hint = Cole o cabeçalho Cookie aqui
-login-cookie-step-1 = Acesse music.youtube.com e certifique-se de estar conectado.
+login-cookie-step-1 = Acesse music.youtube.com e certifique-se de estar conectado. Funciona melhor em uma janela anônima.
 login-cookie-step-2 = Pressione F12, abra a guia Rede e recarregue a página.
 login-cookie-step-3 = Selecione qualquer requisição chamada "browse" ou "next".
 login-cookie-step-4 = Em Cabeçalhos, encontre Cookie em Cabeçalhos da Requisição, clique com o botão direito e copie o valor.
 login-cookie-step-note = Cole o valor completo abaixo: o painel Cookies da requisição não é suficiente, pois o valor precisa conter SAPISID e __Secure-3PAPISID.
-login-cookie-title = Cole seus cookies do YouTube Music para finalizar o login
 login-window-title = Entrar no { $provider }
 login-use = Usar { $provider }
 login-guest-title = Modo convidado
@@ -325,8 +335,6 @@ release-meta = { $year } • { $kind }
 
 # home page
 home-quick-picks = Escolhas rápidas
-home-listen-again = Ouvir novamente
-home-quick-picks-eyebrow = Comece por uma música
 home-quick-picks-empty = Curta algumas músicas e elas aparecerão aqui
 
 # search page
@@ -429,9 +437,12 @@ month-11 = Nov
 month-12 = Dez
 
 # settings
+settings-search = Pesquisar nas configurações
 settings-tab-general = Geral
 settings-tab-appearance = Aparência
 settings-tab-playback = Reprodução
+settings-tab-privacy = Privacidade
+settings-tab-integrations = Integrações
 settings-theme = Tema
 settings-theme-detail = Escolha a paleta de cores do aplicativo
 settings-opacity = Opacidade
@@ -440,6 +451,10 @@ settings-opacity-value = { $percent }%
 settings-theme-config = Abrir configuração
 settings-adaptive = Tema adaptável
 settings-adaptive-detail = Tingir a paleta com a capa do álbum em reprodução
+settings-visualizer = Visualizador
+settings-visualizer-detail = Mostrar barras de espectro atrás da capa em tela cheia
+settings-fullscreen-controls-autohide = Ocultar controles em tela cheia
+settings-fullscreen-controls-autohide-detail = Esmaecer os controles de reprodução quando a tela cheia está inativa
 settings-icons = Pacote de ícones
 settings-icons-detail = Escolha o conjunto de ícones usado na interface
 settings-motion = Reduzir movimento
@@ -450,6 +465,10 @@ settings-saver = Economia de bateria
 settings-saver-detail = Limitar a taxa de quadros das animações quando o Sonora não está em foco, aplicado a partir da próxima inicialização
 settings-corners = Cantos
 settings-corners-detail = O quão arredondados são as superfícies e os controles
+settings-blur = Desfoque da interface
+settings-blur-detail = Aplicar vidro fosco a menus e controles flutuantes
+settings-blur-window = Desfocar a janela
+settings-blur-window-detail = Desenhar a janela sobre uma área de trabalho desfocada. Precisa de opacidade abaixo de 100%
 settings-font = Tamanho da fonte
 settings-font-detail = Tamanho base do texto, tudo o mais escala junto
 settings-font-value = { $size } px
@@ -468,6 +487,8 @@ settings-typeface-detail = A fonte usada pelo Sonora na interface
 settings-typeface-system = Padrão
 settings-typeface-search = Pesquisar fonte
 settings-typeface-none = Nenhuma fonte encontrada
+settings-server-side-decorations = Decorações do servidor
+settings-server-side-decorations-detail = Deixar o compositor desenhar a barra de título, a borda e a sombra
 settings-typeface-loading = Carregando…
 settings-window-controls = Botões da janela
 settings-window-controls-detail = Desenhar minimizar, maximizar e fechar na barra de título
@@ -477,12 +498,74 @@ settings-window-rounding = Cantos da janela
 settings-window-rounding-detail = O quanto os cantos da janela são arredondados
 settings-controls-side = Lado dos botões
 settings-controls-side-detail = Em qual extremidade da barra de título os botões ficam
+settings-close-to-tray = Continuar tocando ao fechar
+settings-close-to-tray-detail = Manter o Sonora na área de notificação e continuar tocando depois que a janela fechar
+settings-discord = Mostrar no Discord
+settings-discord-detail = Exibir a faixa que você está tocando no seu perfil do Discord
+settings-discord-name = Nome do status
+settings-discord-name-detail = Como o status se chama, depois do "Ouvindo" que seus amigos veem
+settings-discord-name-sonora = Sonora
+settings-discord-name-provider = Serviço
+settings-discord-name-music = Música
+settings-discord-name-title = Título
+settings-discord-name-artist = Artista
+settings-discord-name-artist-title = Artista - Título
+settings-discord-show-paused = Mostrar quando pausado
+settings-discord-show-paused-detail = Manter o status no seu perfil do Discord enquanto a faixa está pausada
+settings-discord-badge = Mostrar o selo do serviço
+settings-discord-badge-detail = Marcar o status com um pequeno ícone do serviço de onde veio a faixa
+settings-discord-anonymous = Ocultar detalhes
+settings-discord-anonymous-detail = Dizer apenas que há música tocando, sem o título, o artista ou a capa
+settings-discord-buttons = Botões
+settings-discord-buttons-detail = Links abaixo do status para seus amigos abrirem, um para a faixa no serviço dela e outro para o Sonora
+settings-discord-buttons-pick = Escolher botões
+# the Discord status when the track is left out of it
+discord-listening = Ouvindo música
+get-sonora = Baixar o Sonora
+settings-fullscreen-controls-autohide-automatic = Automático
+settings-fullscreen-controls-autohide-always-hidden = Sempre ocultos
+settings-fullscreen-controls-autohide-always-shown = Sempre visíveis
 settings-normalisation = Normalizar volume
 settings-normalisation-detail = Mantém as faixas em um volume consistente
 settings-gapless = Reprodução contínua
 settings-gapless-detail = Toca uma faixa após a outra sem pausa, como um álbum foi sequenciado
+settings-sleep = Timer de desligamento
+settings-sleep-detail = Deixa a música parar sozinha depois de um tempo, para te embalar até dormir
+settings-sleep-configure = Configurar…
+settings-sleep-off = Desligado
+settings-sleep-end-of-track = Fim da faixa
+settings-sleep-minutes = { $count } min
+settings-equalizer = Equalizador
+settings-equalizer-detail = Molda o som em dez bandas, uma por oitava
+settings-equalizer-preset = Predefinição
+settings-equalizer-preset-detail = Uma curva pronta para as bandas abaixo
+settings-equalizer-custom = Personalizada
+settings-equalizer-flat = Neutra
+settings-equalizer-bass-boost = Reforço de graves
+settings-equalizer-bass-reducer = Redução de graves
+settings-equalizer-treble-boost = Reforço de agudos
+settings-equalizer-vocal = Vocal
+settings-equalizer-rock = Rock
+settings-equalizer-pop = Pop
+settings-equalizer-jazz = Jazz
+settings-equalizer-classical = Clássica
+settings-equalizer-electronic = Eletrônica
+settings-equalizer-acoustic = Acústica
+settings-equalizer-loudness = Loudness
+settings-equalizer-decibels = { $db } dB
+settings-equalizer-hertz = { $hz } Hz
+settings-equalizer-kilohertz = { $khz } kHz
+settings-panel-lyrics-size = Tamanho da letra (painel)
+settings-panel-lyrics-size-detail = Tamanho do texto da letra no painel lateral, além do tamanho base da fonte
+settings-fullscreen-lyrics-size = Tamanho da letra (tela cheia)
+settings-fullscreen-lyrics-size-detail = Tamanho do texto da letra no player em tela cheia, além do tamanho base da fonte
+settings-lyrics-size-value = { $size }%
+settings-lyrics-for-local-files = Letras para arquivos locais
+settings-lyrics-for-local-files-detail = Usar os metadados dos arquivos locais para buscar letras na internet
 settings-karaoke-lyrics = Letras em karaokê
 settings-karaoke-lyrics-detail = Destacar letras palavra por palavra quando a sincronia estiver disponível
+settings-blur-lyrics = Desfocar letras inativas
+settings-blur-lyrics-detail = Desfocar as linhas seguintes e anteriores no painel de letras
 settings-romanized-lyrics = Letras romanizadas
 settings-romanized-lyrics-detail = Mostrar pronúncia gerada localmente para sistemas de escrita selecionados
 settings-romanization-writing-systems = Sistemas de escrita
@@ -494,12 +577,16 @@ settings-romanization-greek = Grego
 settings-romanization-arabic = Árabe
 settings-romanization-other = Outros sistemas de escrita
 settings-advanced = Avançado
+settings-group-window = Janela
 settings-group-accounts = Contas
 settings-group-library = Biblioteca
 settings-group-text = Texto
 settings-group-motion = Movimento
 settings-group-title-bar = Barra de título
+settings-group-window-style = Estilo da janela
 settings-group-lyrics = Letras
+settings-group-equalizer = Equalizador
+settings-group-discord = Discord
 settings-group-project = Projeto
 settings-adaptive-menu = Menu de contexto adaptável
 settings-adaptive-menu-detail = Omite entradas que a linha já mostra, como o álbum ou o artista
@@ -514,6 +601,8 @@ settings-sign-out = Sair
 settings-local-folder = Pasta de músicas importadas
 settings-local-folder-empty = Não configurada
 settings-choose-folder = Escolher pasta…
+settings-add-folder = Adicionar pasta
+settings-remove-folder = Remover pasta
 settings-rescan = Revarrer
 settings-tab-about = Sobre
 settings-version = Versão
@@ -607,6 +696,9 @@ update-working = Baixando a atualização…
 update-failed = Não foi possível instalar a atualização. Tente novamente pela página de lançamentos.
 settings-check-updates = Verificar atualizações
 settings-check-updates-detail = Perguntar ao GitHub na inicialização se uma nova versão está disponível. O Sonora instala a atualização sozinho apenas no Windows; em outras plataformas ele te direciona ao que mudou
+settings-log = Arquivo de log
+settings-log-detail = O que o Sonora escreveu enquanto rodava. Anexe-o a um relatório de bug
+settings-log-open = Abrir o log
 
 # tags
 tags-edit-title = Editar tags
@@ -629,3 +721,10 @@ tags-isrc = ISRC
 tags-comment = Comentário
 toast-tags-saved = Tags salvas para { $name }
 toast-tags-failed = Não foi possível salvar as tags
+nav-pin = Fixar
+toast-library-pin-failed = Não foi possível atualizar o item fixado no Spotify.
+nav-nothing-pinned = Nada aqui
+nav-pins-alphabetical = Alfabética
+nav-pins-kind = Por tipo
+nav-show-full-library = Mostrar biblioteca completa
+nav-return-top = Voltar ao topo

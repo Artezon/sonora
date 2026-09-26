@@ -8,10 +8,9 @@ use music::{
     lrclib, musixmatch, netease,
 };
 
-const OWN_TRUST: u32 = 25;
-const NATIVE: &str = "Spotify";
-const SOURCES: [&str; 6] = [
-    NATIVE,
+const SOURCES: [&str; 7] = [
+    "Spotify",
+    "YouTube Music",
     "Apple Music",
     "Musixmatch",
     "LrcLib",
@@ -40,6 +39,8 @@ struct Row {
 
 fn providers() -> Vec<Arc<dyn LyricsProvider>> {
     vec![
+        Arc::new(music::spotify::SpotifyLyrics::from_env()),
+        Arc::new(music::youtube::YouTubeLyrics::new()),
         Arc::new(binimum::Binimum::new()),
         Arc::new(musixmatch::Musixmatch::new()),
         Arc::new(lrclib::LrcLib::new()),
@@ -54,7 +55,7 @@ async fn main() -> Result<()> {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(40);
-    let limit: u32 = std::env::var("LIMIT")
+    let limit: usize = std::env::var("LIMIT")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(2000);
@@ -69,13 +70,14 @@ async fn main() -> Result<()> {
     if let Ok(wanted) = std::env::var("FIND") {
         for track in client.search(&wanted).await?.into_iter().take(sample) {
             eprintln!("{} — {} ({:?})", track.name, track.artists, track.duration);
-            inspect(&measure(&track, &providers, &client).await);
+            inspect(&measure(&track, &providers).await);
         }
         return Ok(());
     }
 
     let started = Instant::now();
-    let saved = client.saved_tracks(limit).await?;
+    let mut saved = client.saved_tracks().await?;
+    saved.truncate(limit);
     eprintln!(
         "liked songs: {} fetched in {:?}",
         saved.len(),
@@ -99,7 +101,7 @@ async fn main() -> Result<()> {
     let dump = std::env::var("DUMP").is_ok();
     let mut rows = Vec::new();
     for (index, track) in picked.iter().enumerate() {
-        let row = measure(track, &providers, &client).await;
+        let row = measure(track, &providers).await;
         eprintln!(
             "{:>3}/{} {} — {} → {} in {} ms",
             index + 1,
@@ -120,11 +122,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn measure(
-    track: &Track,
-    providers: &[Arc<dyn LyricsProvider>],
-    client: &Arc<LibrespotClient>,
-) -> Row {
+async fn measure(track: &Track, providers: &[Arc<dyn LyricsProvider>]) -> Row {
     let id = track.id.clone().unwrap_or_default();
     let query = LyricsQuery {
         title: track.name.clone(),
@@ -154,30 +152,6 @@ async fn measure(
             }
         });
     }
-    {
-        let client = client.clone();
-        let held = id.clone();
-        let query = query.clone();
-        tasks.spawn(async move {
-            let started = Instant::now();
-            let found = client.track_lyrics(&held).await;
-            let elapsed = started.elapsed();
-            let (hits, error) = match found {
-                Ok(Some(lyrics)) if !lyrics.is_empty() => (vec![own(lyrics, &query)], None),
-                Ok(_) => (Vec::new(), None),
-                Err(error) => (Vec::new(), Some(format!("{error:#}"))),
-            };
-            Measured {
-                source: NATIVE,
-                elapsed,
-                hits,
-                error,
-                best: None,
-                top: None,
-            }
-        });
-    }
-
     let mut measured = Vec::new();
     while let Some(found) = tasks.join_next().await {
         if let Ok(found) = found {
@@ -207,20 +181,6 @@ async fn measure(
         raw: raw.first().map(|hit| hit.lyrics.clone()),
         ranked: ranked.len(),
         measured,
-    }
-}
-
-fn own(lyrics: Lyrics, query: &LyricsQuery) -> LyricsHit {
-    LyricsHit {
-        source: NATIVE,
-        trust: OWN_TRUST,
-        lyrics,
-        instrumental: false,
-        title: query.title.clone(),
-        artist: query.artist.clone(),
-        album: query.album.clone(),
-        duration: (!query.duration.is_zero()).then_some(query.duration),
-        writers: Vec::new(),
     }
 }
 

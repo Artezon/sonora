@@ -1,6 +1,9 @@
+use std::rc::Rc;
+
 use ui::{
-    ActiveTheme as _, Button, Card, DraggedPin, Edge, MenuItem, Panel, Picker, Pin, Pinnable as _,
-    Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap, drop_marker,
+    ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, MenuItem, Panel, Picker, Pin,
+    Pinnable as _, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap,
+    drop_marker,
 };
 
 use gpui::prelude::*;
@@ -12,7 +15,9 @@ use gpui::{Window, div, px};
 use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsTab, navigate,
 };
-use state::{AppSettings, Origin, PinSort, Pins, Playback, PlaybackState, Session, Sonora};
+use state::{
+    AppSettings, Library, Origin, PinSort, Pins, Playback, PlaybackState, Session, Shelf, Sonora,
+};
 
 use crate::shared::menus::{ItemMenu, item_menu};
 
@@ -55,21 +60,31 @@ const LIBRARY_TABS: [(&str, LibraryTab); 4] = [
     ("nav-playlists", LibraryTab::Playlists),
 ];
 
-const SETTINGS_TABS: [(&str, SettingsTab); 6] = [
-    ("settings-tab-general", SettingsTab::General),
-    ("settings-tab-appearance", SettingsTab::Appearance),
-    ("settings-tab-playback", SettingsTab::Playback),
-    ("settings-tab-privacy", SettingsTab::Privacy),
-    ("settings-tab-integrations", SettingsTab::Integrations),
-    ("settings-tab-about", SettingsTab::About),
-];
-
 const MIN_WIDTH: Pixels = px(160.);
 const MAX_WIDTH: Pixels = px(400.);
 const HINT_HEIGHT: Pixels = px(42.);
 const VACANCY_HEIGHT: Pixels = px(88.);
 /// How far the pin mark on a library row falls back from the accent.
 const PIN_MARK: f32 = 0.7;
+/// The space between two pinned entries, the same as the `gap_1` between the rows above them.
+const ROW_GAP: Pixels = px(4.);
+
+/// The two navigation entries that expand into tabs rather than navigate.
+#[derive(Clone, Copy, PartialEq)]
+enum Group {
+    Library,
+    Local,
+}
+
+impl Group {
+    fn of(destination: &Destination) -> Option<Self> {
+        match destination {
+            Destination::Library(_) => Some(Self::Library),
+            Destination::Local(_) => Some(Self::Local),
+            _ => None,
+        }
+    }
+}
 
 pub(crate) struct SidebarLeft {
     settings: Entity<AppSettings>,
@@ -82,12 +97,12 @@ pub(crate) struct SidebarLeft {
     forced: Option<bool>,
     library_open: bool,
     local_open: bool,
-    settings_open: bool,
     pinned_open: bool,
     dropping: bool,
     drop_gap: Option<usize>,
     playback: Entity<Playback>,
     pins: Entity<Pins>,
+    library: Entity<Library>,
     track_menu: ItemMenu,
     context_menu: Option<(Pin, Point<Pixels>)>,
     scrollbar: Entity<ui::Scrollbar>,
@@ -100,6 +115,8 @@ impl SidebarLeft {
         let session = Sonora::global(cx).session.clone();
         let playback = Sonora::global(cx).playback.clone();
         let pins = Sonora::global(cx).pins.clone();
+        let library = Sonora::global(cx).library.clone();
+        cx.observe(&library, |_, _, cx| cx.notify()).detach();
         cx.observe(&pins, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let me = cx.entity_id();
@@ -122,7 +139,6 @@ impl SidebarLeft {
         let at = trail.read(cx).current();
         let library_open = matches!(at, Destination::Library(_));
         let local_open = matches!(at, Destination::Local(_));
-        let settings_open = matches!(at, Destination::Settings(_));
 
         Self {
             settings,
@@ -135,13 +151,13 @@ impl SidebarLeft {
             cramped: false,
             library_open,
             local_open,
-            settings_open,
             pinned_open,
             dropping: false,
             drop_gap: None,
             playback,
             pins,
-            track_menu: ItemMenu::new(playlist_scrollbar),
+            library,
+            track_menu: ItemMenu::new(playlist_scrollbar, cx),
             context_menu: None,
             scrollbar,
             popovers: ui::Popovers::default(),
@@ -153,10 +169,9 @@ impl SidebarLeft {
             return;
         }
         self.at = current.clone();
-        let (library, local, settings) = expanded(current);
+        let (library, local) = expanded(current);
         self.library_open |= library;
         self.local_open |= local;
-        self.settings_open |= settings;
     }
 
     fn dismiss_menu(&mut self, cx: &mut Context<Self>) {
@@ -225,20 +240,48 @@ impl SidebarLeft {
         super::cap(MIN_WIDTH, MAX_WIDTH, reserved, window)
     }
 
-    pub fn adapt(&mut self, window: &Window, cx: &mut Context<Self>) {
+    /// Flips into or out of the cramped state from the room the window leaves
+    /// beside a right sidebar of `right` pixels. This runs inside a render,
+    /// where a notify schedules nothing, so a flip asks for a full window
+    /// refresh instead. That effect lands once the draw is over.
+    pub fn adapt(&mut self, right: Pixels, window: &Window, cx: &mut App) {
         self.width = ui::snapped(self.width, window);
 
-        let taken = self.width + super::Chrome::sidebar_right(cx);
-        let space_left = window.viewport_size().width - taken;
+        let space_left = window.viewport_size().width - self.width - right;
         let cramped = space_left < SNUG;
         if cramped != self.cramped {
             self.cramped = cramped;
             self.forced = None;
+            cx.refresh_windows();
         }
     }
 
-    /// The pinned section: its header, and its entries once it is expanded.
-    fn pins(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The navigation entries, each followed by its tabs while its group is open.
+    fn navigation(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        // A shelf with rows on it belongs in the sidebar even before the session has restored,
+        // since a snapshot fills it while the provider is still answering.
+        let stocked = self.session.read(cx).authenticated()
+            || self.library.read(cx).stocked(Shelf::Streaming);
+        let mut rows = Vec::new();
+        for (index, (entry, _, destination)) in NAV.iter().enumerate() {
+            if entry.is_some_and(|entry| !self.settings.read(cx).nav_shown(entry.id())) {
+                continue;
+            }
+            let group = Group::of(destination);
+            if group == Some(Group::Library) && !stocked {
+                continue;
+            }
+            rows.push(self.nav(index, cx));
+            if let Some(group) = group.filter(|group| self.opened(*group)) {
+                rows.push(self.tabs(group, cx));
+            }
+        }
+        rows
+    }
+
+    /// The pinned section: its header, and its entries once it is expanded. The entries are a
+    /// `Deck`, so only the ones on screen are ever built.
+    fn pins(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         if !self.settings.read(cx).nav_shown(NavEntry::Pins.id()) {
             return Vec::new();
         }
@@ -248,11 +291,11 @@ impl SidebarLeft {
             return rows;
         }
 
-        let pinned = self.pins.read(cx).entries(cx);
-        let count = pinned.len();
+        let pins = self.pins.read(cx);
+        let pinned = pins.entries(cx);
         let rest = match self.settings.read(cx).sidebar_full_library() {
-            true => self.pins.read(cx).library(cx),
-            false => Vec::new(),
+            true => pins.library(cx),
+            false => Rc::new(Vec::new()),
         };
         if pinned.is_empty() && rest.is_empty() {
             rows.push(match self.dropping {
@@ -262,14 +305,41 @@ impl SidebarLeft {
             return rows;
         }
 
-        rows.extend(
-            pinned
-                .into_iter()
-                .chain(rest)
-                .enumerate()
-                .map(|(index, pin)| self.pin_row(index, pin, count, cx)),
+        let held = pinned.len();
+        let count = held + rest.len();
+        let row = ui::snapped(cx.theme().metrics.list_row, window);
+        rows.push(
+            Deck::new("sidebar-pins-deck")
+                .rows((0..count).map(|_| row))
+                .gap(ROW_GAP)
+                .draw(cx.processor(move |this, index: usize, _, cx| {
+                    let pin = match index < held {
+                        true => pinned.get(index),
+                        false => rest.get(index - held),
+                    };
+                    match pin {
+                        Some(pin) => this.pin_row(index, pin.clone(), held, cx),
+                        None => div().into_any_element(),
+                    }
+                }))
+                .into_any_element(),
         );
         rows
+    }
+
+    fn opened(&self, group: Group) -> bool {
+        match group {
+            Group::Library => self.library_open,
+            Group::Local => self.local_open,
+        }
+    }
+
+    fn flip(&mut self, group: Group) {
+        let open = match group {
+            Group::Library => &mut self.library_open,
+            Group::Local => &mut self.local_open,
+        };
+        *open = !*open;
     }
 
     fn pins_header(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -285,7 +355,10 @@ impl SidebarLeft {
             .w_full()
             .min_w_0()
             .h(theme.metrics.control_small)
-            .px_2()
+            .pl_2()
+            // Narrower on the right than on the left, so the sort glyph falls on the same
+            // line as the chevrons of the rows above.
+            .pr_1()
             .mt(theme.metrics.pad)
             .mb(px(2.))
             .child(
@@ -384,7 +457,7 @@ impl SidebarLeft {
         .into_any_element()
     }
 
-    /// One entry. The first `count` of them are the pins, which carry the drop slots; the rest
+    /// One entry. The first `count` of them are the pins, which carry the drop slots. The rest
     /// is the library underneath, which can be dragged up into the pins but holds no slot.
     fn pin_row(&self, index: usize, pin: Pin, count: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
@@ -463,145 +536,70 @@ impl SidebarLeft {
             .into_any_element()
     }
 
-    fn navigation(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// One navigation entry. An expandable one flips its group open and shut, any other one
+    /// navigates and is lit while its section is current.
+    fn nav(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
-        let sidebar_accent = theme.sidebar_accent;
-        let foreground = theme.foreground;
-        let muted = theme.muted_foreground;
+        let accent = theme.sidebar_accent;
+        let (entry, icon, destination) = NAV[index].clone();
+        let key = entry.map_or("nav-settings", NavEntry::key);
         let current = self.trail.read(cx).current();
-        let authenticated = self.session.read(cx).authenticated();
-        let shown = |entry: NavEntry, cx: &App| self.settings.read(cx).nav_shown(entry.id());
+        let group = Group::of(&destination);
+        let active = match group {
+            Some(group) => Group::of(&current) == Some(group),
+            None => destination.same_section(&current),
+        };
+        let tint = match active {
+            true => theme.foreground,
+            false => theme.muted_foreground,
+        };
+        let row = nav_row(index, key, tint, accent).icon(icon);
 
-        let mut rows: Vec<AnyElement> = Vec::new();
-        for (index, (entry, icon, destination)) in NAV.into_iter().enumerate() {
-            let key = entry.map_or("nav-settings", NavEntry::key);
-            if entry.is_some_and(|entry| !shown(entry, cx)) {
-                continue;
-            }
-
-            if matches!(destination, Destination::Library(_)) {
-                if !authenticated {
-                    continue;
-                }
-                let inside = matches!(current, Destination::Library(_));
-                let text = if inside { foreground } else { muted };
-
-                rows.push(
-                    nav_row(index, key, text, sidebar_accent)
-                        .icon(icon)
-                        .trailing(chevron(self.library_open))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.library_open = !this.library_open;
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                );
-
-                if self.library_open {
-                    rows.push(
-                        Tabs::new()
-                            .items(LIBRARY_TABS.into_iter().map(|(name, tab)| {
-                                let chosen = current == Destination::Library(tab);
-                                let tint = if chosen { foreground } else { muted };
-
-                                nav_row(name, name, tint, sidebar_accent)
-                                    .flex_1()
-                                    .when(chosen, |button| button.bg(sidebar_accent))
-                                    .on_click(move |_, _, cx| {
-                                        navigate(Destination::Library(tab), cx)
-                                    })
-                            }))
-                            .into_any_element(),
-                    );
-                }
-                continue;
-            }
-
-            if matches!(destination, Destination::Local(_)) {
-                let inside = matches!(current, Destination::Local(_));
-                let text = if inside { foreground } else { muted };
-
-                rows.push(
-                    nav_row(index, key, text, sidebar_accent)
-                        .icon(icon)
-                        .trailing(chevron(self.local_open))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.local_open = !this.local_open;
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                );
-
-                if self.local_open {
-                    rows.push(
-                        Tabs::new()
-                            .items(LIBRARY_TABS.into_iter().enumerate().map(
-                                |(slot, (name, tab))| {
-                                    let chosen = current == Destination::Local(tab);
-                                    let tint = if chosen { foreground } else { muted };
-
-                                    nav_row(("local-tab", slot as u32), name, tint, sidebar_accent)
-                                        .flex_1()
-                                        .when(chosen, |button| button.bg(sidebar_accent))
-                                        .on_click(move |_, _, cx| {
-                                            navigate(Destination::Local(tab), cx)
-                                        })
-                                },
-                            ))
-                            .into_any_element(),
-                    );
-                }
-                continue;
-            }
-
-            if matches!(destination, Destination::Settings(_)) {
-                let inside = matches!(current, Destination::Settings(_));
-                let text = if inside { foreground } else { muted };
-
-                rows.push(
-                    nav_row(index, key, text, sidebar_accent)
-                        .icon(icon)
-                        .trailing(chevron(self.settings_open))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.settings_open = !this.settings_open;
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                );
-
-                if self.settings_open {
-                    rows.push(
-                        Tabs::new()
-                            .items(SETTINGS_TABS.into_iter().map(|(name, tab)| {
-                                let chosen = current == Destination::Settings(tab);
-                                let tint = if chosen { foreground } else { muted };
-
-                                nav_row(name, name, tint, sidebar_accent)
-                                    .flex_1()
-                                    .when(chosen, |button| button.bg(sidebar_accent))
-                                    .on_click(move |_, _, cx| {
-                                        navigate(Destination::Settings(tab), cx)
-                                    })
-                            }))
-                            .into_any_element(),
-                    );
-                }
-                continue;
-            }
-
-            let active = destination.same_section(&current);
-            let text = if active { foreground } else { muted };
-
-            rows.push(
-                nav_row(index, key, text, sidebar_accent)
-                    .icon(icon)
-                    .when(active, |button| button.bg(sidebar_accent))
-                    .on_click(move |_, _, cx| navigate(destination.clone(), cx))
-                    .into_any_element(),
-            );
+        match group {
+            Some(group) => row
+                .trailing(chevron(self.opened(group)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.flip(group);
+                    cx.notify();
+                })),
+            None => row
+                .when(active, |button| button.bg(accent))
+                .on_click(move |_, _, cx| navigate(destination.clone(), cx)),
         }
+        .into_any_element()
+    }
 
-        rows
+    /// The tabs under an expanded group.
+    fn tabs(&self, group: Group, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let accent = theme.sidebar_accent;
+        let current = self.trail.read(cx).current();
+        let tab = |id: ElementId, key: &'static str, destination: Destination| {
+            let chosen = destination == current;
+            let tint = match chosen {
+                true => theme.foreground,
+                false => theme.muted_foreground,
+            };
+
+            nav_row(id, key, tint, accent)
+                .flex_1()
+                .when(chosen, |button| button.bg(accent))
+                .on_click(move |_, _, cx| navigate(destination.clone(), cx))
+        };
+
+        match group {
+            Group::Library => Tabs::new().items(
+                LIBRARY_TABS
+                    .into_iter()
+                    .map(|(name, tab_id)| tab(name.into(), name, Destination::Library(tab_id))),
+            ),
+            Group::Local => Tabs::new().items(LIBRARY_TABS.into_iter().enumerate().map(
+                |(slot, (name, tab_id))| {
+                    tab(("local-tab", slot).into(), name, Destination::Local(tab_id))
+                },
+            )),
+        }
+        .into_any_element()
     }
 
     fn persist(&self, cx: &mut Context<Self>) {
@@ -620,7 +618,7 @@ impl Render for SidebarLeft {
 
         let current = self.trail.read(cx).current();
         self.follow(&current);
-        self.adapt(window, cx);
+        self.adapt(super::Chrome::sidebar_right(cx), window, cx);
 
         if !cx.has_active_drag() {
             self.dropping = false;
@@ -628,7 +626,7 @@ impl Render for SidebarLeft {
         }
 
         let mut rows = self.navigation(cx);
-        rows.extend(self.pins(cx));
+        rows.extend(self.pins(window, cx));
 
         let overlaid = self.overlays();
         let panel = Panel::new("sidebar-left", Side::Left, self.width)
@@ -774,11 +772,11 @@ fn vacancy() -> AnyElement {
         .into_any_element()
 }
 
-fn expanded(current: &Destination) -> (bool, bool, bool) {
+/// Which groups the route opens: Your Library and Local Music, in that order.
+fn expanded(current: &Destination) -> (bool, bool) {
     (
         matches!(current, Destination::Library(_)),
         matches!(current, Destination::Local(_)),
-        matches!(current, Destination::Settings(_)),
     )
 }
 
@@ -810,15 +808,15 @@ mod tests {
     fn a_section_expands_only_where_it_leads() {
         assert_eq!(
             expanded(&Destination::Library(LibraryTab::Albums)),
-            (true, false, false)
+            (true, false)
         );
         assert_eq!(
             expanded(&Destination::Local(LibraryTab::Albums)),
-            (false, true, false)
+            (false, true)
         );
         assert_eq!(
             expanded(&Destination::Settings(SettingsTab::General)),
-            (false, false, true)
+            (false, false)
         );
     }
 
@@ -834,11 +832,7 @@ mod tests {
         ];
 
         for destination in away {
-            assert_eq!(
-                expanded(&destination),
-                (false, false, false),
-                "{destination:?}"
-            );
+            assert_eq!(expanded(&destination), (false, false), "{destination:?}");
         }
     }
 }
