@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Opening a file from a file manager now switches to the fullscreen player. It can be turned off
+  in Settings > Playback.
+
 ### Changed
 
 - Opening audio files from a file manager now starts a queue of just those files and plays the

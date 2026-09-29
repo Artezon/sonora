@@ -215,6 +215,13 @@ fn follow(items: &[String], tail: bool, cx: &mut App) {
     }
     if let Some(destination) = destination {
         router::navigate(destination, cx);
+    } else if !paths.is_empty()
+        && Sonora::global(cx)
+            .settings
+            .read(cx)
+            .fullscreen_on_file_open()
+    {
+        router::navigate(router::Destination::Fullscreen, cx);
     }
     if !paths.is_empty() {
         let playback = Sonora::global(cx).playback.clone();
