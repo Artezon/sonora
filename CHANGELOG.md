@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Opening audio files from a file manager now starts a queue of just those files and plays the
+  first one, instead of adding them to what was already playing. The first file starts right away
+  without any delay, and any other files you selected queue up behind it.
+
 ### Fixed
 
 - Scrolling through Home stays smooth as new shelves and their covers come into view.
