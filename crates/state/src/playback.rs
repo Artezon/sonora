@@ -856,23 +856,29 @@ impl Playback {
     /// a request to hear them only, so the queue becomes these alone, played from the first in the
     /// order they were given.
     pub fn open_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        self.resolve_paths(paths, true, None, cx);
+        self.resolve_paths(paths, None, None, cx);
     }
 
     /// Queues paths that arrived after the first ones of the same open, so if a file manager
     /// launches Sonora once per selected file, we still get one queue.
     pub fn queue_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let pending_open = self.pending_open.take();
-        self.resolve_paths(paths, false, pending_open, cx);
+        self.resolve_paths(paths, Some(QueuePlacement::Last), pending_open, cx);
     }
 
-    /// Reads `paths` as tracks on the runtime and puts them in the queue. If `replace_queue` is
-    /// true, the old queue is cleared. Before that it waits for the previous batch, if it hasn't
-    /// completed yet, so tracks reach the queue in the order the file manager passes them.
+    /// Queues paths dropped on the queue at `gap` upcoming tracks in.
+    pub fn insert_paths(&mut self, paths: Vec<PathBuf>, gap: usize, cx: &mut Context<Self>) {
+        let pending_open = self.pending_open.take();
+        self.resolve_paths(paths, Some(QueuePlacement::Gap(gap)), pending_open, cx);
+    }
+
+    /// Reads `paths` as tracks, creates a new queue or puts them in the existing one, then plays
+    /// the first playable track. It waits for the previous batch, if it hasn't completed yet,
+    /// so tracks reach the queue in the order the file manager passes them.
     fn resolve_paths(
         &mut self,
         paths: Vec<PathBuf>,
-        replace_queue: bool,
+        placement: Option<QueuePlacement>,
         pending_open: Option<Task<()>>,
         cx: &mut Context<Self>,
     ) {
@@ -896,14 +902,19 @@ impl Playback {
 
             this.update(cx, |this, cx| match loaded {
                 Ok(tracks) if tracks.is_empty() => {}
-                Ok(tracks) if replace_queue => {
-                    let index = tracks
-                        .iter()
-                        .position(|track| track.playable)
-                        .unwrap_or_default();
-                    this.begin(tracks, index, None, cx)
-                }
-                Ok(tracks) => this.enqueue_all(tracks, cx),
+                Ok(tracks) => match placement {
+                    Some(QueuePlacement::Next) => this.play_next_all(tracks, cx),
+                    Some(QueuePlacement::End) => this.enqueue_all(tracks, cx),
+                    Some(QueuePlacement::Last) => this.play_last_all(tracks, cx),
+                    Some(QueuePlacement::Gap(gap)) => this.insert_all(tracks, gap, cx),
+                    None => {
+                        let index = tracks
+                            .iter()
+                            .position(|track| track.playable)
+                            .unwrap_or_default();
+                        this.begin(tracks, index, None, cx)
+                    }
+                },
                 Err(error) => log::warn!("playback: cannot open files: {error:#}"),
             })
             .ok();

@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Opening a file from a file manager now switches to the fullscreen player. It can be turned off
   in Settings > Playback.
+- Sonora supports drag-and-drop from other programs, like file managers, into the queue. The line
+  shows the place in the queue where the files will land, the same one in-app drops use.
 
 ### Changed
 
