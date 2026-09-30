@@ -856,20 +856,26 @@ impl Playback {
     /// a request to hear them only, so the queue becomes these alone, played from the first in the
     /// order they were given.
     pub fn open_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        self.resolve_paths(paths, None, None, cx);
+        self.resolve_paths(paths, None, false, None, cx);
     }
 
     /// Queues paths that arrived after the first ones of the same open, so if a file manager
     /// launches Sonora once per selected file, we still get one queue.
     pub fn queue_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let pending_open = self.pending_open.take();
-        self.resolve_paths(paths, Some(QueuePlacement::Last), pending_open, cx);
+        self.resolve_paths(paths, Some(QueuePlacement::Last), true, pending_open, cx);
     }
 
     /// Queues paths dropped on the queue at `gap` upcoming tracks in.
     pub fn insert_paths(&mut self, paths: Vec<PathBuf>, gap: usize, cx: &mut Context<Self>) {
         let pending_open = self.pending_open.take();
-        self.resolve_paths(paths, Some(QueuePlacement::Gap(gap)), pending_open, cx);
+        self.resolve_paths(
+            paths,
+            Some(QueuePlacement::Gap(gap)),
+            false,
+            pending_open,
+            cx,
+        );
     }
 
     /// Reads `paths` as tracks, creates a new queue or puts them in the existing one, then plays
@@ -879,6 +885,7 @@ impl Playback {
         &mut self,
         paths: Vec<PathBuf>,
         placement: Option<QueuePlacement>,
+        reshuffle: bool,
         pending_open: Option<Task<()>>,
         cx: &mut Context<Self>,
     ) {
@@ -905,7 +912,12 @@ impl Playback {
                 Ok(tracks) => match placement {
                     Some(QueuePlacement::Next) => this.play_next_all(tracks, cx),
                     Some(QueuePlacement::End) => this.enqueue_all(tracks, cx),
-                    Some(QueuePlacement::Last) => this.play_last_all(tracks, cx),
+                    Some(QueuePlacement::Last) => {
+                        this.play_last_all(tracks, cx);
+                        if reshuffle {
+                            this.queue.update(cx, |queue, cx| queue.reshuffle(cx));
+                        }
+                    }
                     Some(QueuePlacement::Gap(gap)) => this.insert_all(tracks, gap, cx),
                     None => {
                         let index = tracks
