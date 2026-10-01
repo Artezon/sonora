@@ -25,12 +25,11 @@ const FILE_PREFIX: &str = "file://";
 
 const FALLBACK_ICON: &str = "icons/music.svg";
 pub(crate) const ROUNDED: Pixels = px(4.);
-/// What the cache trims back to. It is allowed past this while a scroll pulls covers
-/// in, and only trims once it crosses `CACHE_CEILING`, since a trim asks every window
-/// to redraw and is worth doing in one batch rather than a cover at a time.
-const CACHE_BYTES: usize = 32 * 1024 * 1024;
-/// How far past the budget the cache runs before it trims.
-const CACHE_CEILING: usize = 48 * 1024 * 1024;
+/// What the cache trims back to at the least. The budget grows to one screenful of the
+/// largest window a cover was drawn in, so a HiDPI grid never trims what it shows. The
+/// cache is allowed half as much again past its budget while a scroll pulls covers in,
+/// since a trim asks every window to redraw and is worth doing in one batch.
+const CACHE_BYTES: usize = 16 * 1024 * 1024;
 const CACHE_ITEMS: usize = 256;
 /// The largest edge a cover is decoded at. It sits above a fullscreen cover on a 5K screen at
 /// 2x, so it only ever stops a local original of several thousand pixels from being kept whole.
@@ -314,6 +313,8 @@ struct ArtworkCache {
     /// so an eviction never costs a button its colour.
     tints: HashMap<Resource, CoverPalette>,
     bytes: usize,
+    /// The size in bytes of the largest window a cover was drawn in, which sets the budget.
+    screen: usize,
     _sweep: Task<()>,
 }
 
@@ -333,6 +334,7 @@ impl ArtworkCache {
                 soft: HashMap::new(),
                 tints: HashMap::new(),
                 bytes: 0,
+                screen: 0,
                 _sweep: sweeper(cx),
             });
             cx.set_global(Installed(cache));
@@ -398,16 +400,23 @@ impl ArtworkCache {
         self.condemned.insert(resource.clone(), cached);
     }
 
+    /// What the cache trims back to: `CACHE_BYTES`, or one screenful of the largest window
+    /// when that is more.
+    fn budget(&self) -> usize {
+        CACHE_BYTES.max(self.screen)
+    }
+
     /// Condemns the least recently drawn covers until the cache is back inside its budget,
     /// then asks every window to redraw. The redraw is what makes the condemned batch safe
     /// to drop: it rebuilds every cached view, so nothing is replayed from last frame's
     /// primitives and everything still on screen asks for its cover again.
     fn trim(&mut self, cx: &mut App) {
-        if self.bytes <= CACHE_CEILING && self.items.len() <= CACHE_ITEMS {
+        let budget = self.budget();
+        if self.bytes <= budget + budget / 2 && self.items.len() <= CACHE_ITEMS {
             return;
         }
         let before = self.condemned.len();
-        while self.items.len() > 1 && (self.bytes > CACHE_BYTES || self.items.len() > CACHE_ITEMS) {
+        while self.items.len() > 1 && (self.bytes > budget || self.items.len() > CACHE_ITEMS) {
             let Some((resource, _)) = self.oldest() else {
                 break;
             };
@@ -505,6 +514,7 @@ impl ArtworkCache {
             .filter(|(_, used, _)| used.elapsed() > IDLE)
             .count();
         let protected = ages.len().saturating_sub(KEEP_ITEMS);
+        let budget = self.budget();
         let mut bytes = self.bytes;
         let mut stale = Vec::new();
 
@@ -512,7 +522,7 @@ impl ArtworkCache {
             if index >= protected || used.elapsed() <= GRACE {
                 break;
             }
-            if bytes <= CACHE_BYTES && used.elapsed() <= IDLE {
+            if bytes <= budget && used.elapsed() <= IDLE {
                 break;
             }
             stale.push(resource.clone());
@@ -621,6 +631,11 @@ impl ArtworkCache {
             self.items.insert(key, cached);
             return Some(value);
         }
+        let viewport = window.viewport_size();
+        let scale = window.scale_factor();
+        let screen =
+            (viewport.width.as_f32() * viewport.height.as_f32() * scale * scale) as usize * 4;
+        self.screen = self.screen.max(screen);
 
         if !self.pending.contains_key(&key) && self.pending.len() >= MAX_PENDING {
             self.reap_pending(window, cx);
