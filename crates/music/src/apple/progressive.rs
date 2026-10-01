@@ -8,8 +8,9 @@
 //! rather than the last.
 //!
 //! Decryption runs on whichever thread reads, which is the engine's audio thread and never a
-//! tokio worker or the output callback. A sample costs about a millisecond, so one second of
-//! audio costs fifty, well inside what the output has queued.
+//! tokio worker or the output callback. A sample costs about one and a half milliseconds, nearly
+//! all of it inside the CDM rather than on the way to its host process, so one second of audio
+//! costs about seventy, well inside what the output has queued.
 
 use std::io;
 use std::ops::Range;
@@ -262,22 +263,16 @@ impl Body for Cenc {
             if !cleared[index] {
                 let sample = &samples[index];
                 let span = sample.start..sample.end();
-                let Ok(bytes) = spool.bytes(span.clone()) else {
+                let Ok(mut bytes) = spool.bytes(span.clone()) else {
                     return Err(io::Error::other("a sample runs past the track"));
                 };
                 let began = Instant::now();
-                let clear = keys
-                    .cdm
-                    .decrypt(&bytes, &keys.key_id, &sample.iv, &sample.subs)
+                keys.cdm
+                    .decrypt(&mut bytes, &keys.key_id, &sample.iv, &sample.subs)
                     .map_err(|error| io::Error::other(format!("{error:#}")))?;
                 spent.0 += 1;
                 spent.1 += began.elapsed();
-                if clear.len() != span.len() {
-                    return Err(io::Error::other(
-                        "the widevine cdm returned a sample of the wrong length",
-                    ));
-                }
-                spool.write_at(span.start, &clear)?;
+                spool.write_at(span.start, &bytes)?;
                 cleared[index] = true;
             }
             index += 1;

@@ -9558,6 +9558,7 @@ dependencies = [
  "cc",
  "dirs",
  "flate2",
+ "libc",
  "log",
  "reqwest 0.13.4",
  "serde_json",
