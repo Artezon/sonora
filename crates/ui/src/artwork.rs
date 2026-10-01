@@ -44,7 +44,9 @@ const KEEP_ITEMS: usize = 96;
 const IDLE: Duration = Duration::from_secs(120);
 const ORPHAN: Duration = Duration::from_secs(20);
 const SWEEP: Duration = Duration::from_secs(30);
-const SOFT_ITEMS: usize = 8;
+/// How many softened covers are kept. Only the cover waiting on its large art is drawn
+/// soft, so two cover the current track and a skip back.
+const SOFT_ITEMS: usize = 2;
 const SOFT_SIGMA: f32 = 1.6;
 const SMALL_BYTES: usize = 64 * 1024;
 const BIG_BYTES: usize = 256 * 1024;
