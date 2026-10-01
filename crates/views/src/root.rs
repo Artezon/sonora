@@ -727,7 +727,7 @@ impl Render for Root {
         // `PlayerBar` for the top and bottom edges. Rounding the root too keeps its own
         // background quad correct and costs nothing.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx));
+        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<gpui::Pixels> = None;
 
