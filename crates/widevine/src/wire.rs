@@ -2,13 +2,18 @@
 //!
 //! A request is an op byte, a little-endian `u32` payload length and the payload. An answer is
 //! a status byte, a length and a payload, and a failure carries its message as UTF-8. The host
-//! sends one answer before any request, saying whether the module opened.
+//! sends one answer before any request, saying whether the module opened. Its payload is the
+//! host's [`VERSION`], so an app that finds a different build on disk refuses to talk to it.
 //!
 //! A decrypt payload is the 16 byte IV, the key id length as a `u32` and the key id, the
 //! subsample count as a `u32` and that many clear and cipher `u32` pairs, then the sample to the
 //! end of the frame. Its answer is the cleartext, exactly as long as the sample.
 
 use std::io::{self, Read, Write};
+
+/// What a host says it is in its first answer. Both sides are the same executable, so this only
+/// differs when the file was replaced under a running app.
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/1");
 
 /// The largest payload either side accepts. A license or a sample is far smaller, so a length
 /// past this means the two sides are out of step.
@@ -21,7 +26,9 @@ pub const UPDATE: u8 = 2;
 /// Decrypts one sample, laid out as the module docs describe.
 pub const DECRYPT: u8 = 3;
 
+/// The status of an answer that carries what was asked for.
 pub const OK: u8 = 0;
+/// The status of an answer that carries the reason a request failed.
 pub const FAILED: u8 = 1;
 
 /// Writes the tag and length that open a request or an answer.

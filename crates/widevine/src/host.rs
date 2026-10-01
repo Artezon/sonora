@@ -16,19 +16,23 @@ use crate::wire;
 /// Room for a whole answer, so each one leaves in a single write.
 const ANSWER_BUFFER: usize = 64 * 1024;
 
-/// Opens the module at `module` and serves requests until the parent closes stdin. Fails only
-/// when the pipe itself breaks or the module does not open, which the parent hears about first.
+/// Opens the module at `module` and serves requests until the app closes stdin or goes away.
+/// Fails only when the pipe misbehaves some other way or the module does not open, which the
+/// app hears about first.
 pub fn serve(module: &Path) -> Result<()> {
+    name_process();
     let mut input = io::stdin().lock();
     let mut output = BufWriter::with_capacity(ANSWER_BUFFER, answers()?);
 
     let shim = match Shim::open(module) {
         Ok(shim) => {
-            reply(&mut output, wire::OK, &[])?;
+            reply(&mut output, wire::OK, wire::VERSION.as_bytes())
+                .context("cannot answer the app")?;
             shim
         }
         Err(error) => {
-            reply(&mut output, wire::FAILED, format!("{error:#}").as_bytes())?;
+            reply(&mut output, wire::FAILED, format!("{error:#}").as_bytes())
+                .context("cannot answer the app")?;
             return Err(error);
         }
     };
@@ -37,18 +41,23 @@ pub fn serve(module: &Path) -> Result<()> {
     let mut payload = Vec::new();
     let mut subs = Vec::new();
     loop {
-        let (op, len) = match wire::take_header(&mut input) {
-            Ok(header) => header,
-            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
+        let request = wire::take_header(&mut input).and_then(|(op, len)| {
+            payload.resize(len, 0);
+            input.read_exact(&mut payload).map(|()| op)
+        });
+        let op = match request {
+            Ok(op) => op,
+            Err(error) if gone(&error) => return Ok(()),
             Err(error) => return Err(error).context("cannot read a request"),
         };
-        payload.resize(len, 0);
-        input
-            .read_exact(&mut payload)
-            .context("cannot read a request")?;
-        match answer(&shim, op, &payload, &mut subs) {
-            Ok(body) => reply(&mut output, wire::OK, &body)?,
-            Err(error) => reply(&mut output, wire::FAILED, format!("{error:#}").as_bytes())?,
+        let sent = match answer(&shim, op, &payload, &mut subs) {
+            Ok(body) => reply(&mut output, wire::OK, &body),
+            Err(error) => reply(&mut output, wire::FAILED, format!("{error:#}").as_bytes()),
+        };
+        match sent {
+            Ok(()) => {}
+            Err(error) if gone(&error) => return Ok(()),
+            Err(error) => return Err(error).context("cannot answer the app"),
         }
     }
 }
@@ -77,11 +86,19 @@ fn answer(shim: &Shim, op: u8, payload: &[u8], subs: &mut Vec<u32>) -> Result<Ve
 }
 
 /// Sends one answer and flushes it, so the parent is never left waiting on a buffer.
-fn reply(output: &mut impl Write, status: u8, body: &[u8]) -> Result<()> {
-    wire::put_header(output, status, body.len())
-        .and_then(|()| output.write_all(body))
-        .and_then(|()| output.flush())
-        .context("cannot answer the app")
+fn reply(output: &mut impl Write, status: u8, body: &[u8]) -> io::Result<()> {
+    wire::put_header(output, status, body.len())?;
+    output.write_all(body)?;
+    output.flush()
+}
+
+/// Whether a pipe error means the app closed its end or exited, which ends the host like any
+/// other goodbye.
+fn gone(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
+    )
 }
 
 /// Where answers go. The module and whatever it links may print, and a stray byte on the
@@ -101,8 +118,63 @@ fn answers() -> Result<std::fs::File> {
     Ok(unsafe { std::fs::File::from_raw_fd(private) })
 }
 
-/// Where answers go. Off Unix they go straight to stdout.
-#[cfg(not(unix))]
+/// Where answers go. The module and whatever it links may print, and a stray byte on the
+/// answer pipe would put the parent out of step, so answers leave on a private copy of the
+/// stdout handle while the standard handle and the C runtime's descriptor 1 are pointed at
+/// stderr, or closed when there is no stderr.
+#[cfg(windows)]
+fn answers() -> Result<std::fs::File> {
+    use std::os::windows::io::FromRawHandle as _;
+
+    use windows_sys::Win32::Foundation::{
+        DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    let stdout = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+    if stdout.is_null() || stdout == INVALID_HANDLE_VALUE {
+        bail!("cannot find stdout");
+    }
+    let mut private: HANDLE = std::ptr::null_mut();
+    let process = unsafe { GetCurrentProcess() };
+    let copied = unsafe {
+        DuplicateHandle(
+            process,
+            stdout,
+            process,
+            &mut private,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    if copied == 0 {
+        return Err(io::Error::last_os_error()).context("cannot copy stdout");
+    }
+    unsafe {
+        SetStdHandle(STD_OUTPUT_HANDLE, GetStdHandle(STD_ERROR_HANDLE));
+        if libc::dup2(2, 1) != 0 {
+            libc::close(1);
+        }
+    }
+    Ok(unsafe { std::fs::File::from_raw_handle(private) })
+}
+
+/// Where answers go, on a platform with no way here to move the standard handle aside.
+#[cfg(not(any(unix, windows)))]
 fn answers() -> Result<io::Stdout> {
     Ok(io::stdout())
 }
+
+/// Names the process for `ps` and `top`. It is started from `/proc/self/exe`, which would
+/// otherwise show up as `exe`.
+#[cfg(target_os = "linux")]
+fn name_process() {
+    unsafe { libc::prctl(libc::PR_SET_NAME, c"sonora-widevine".as_ptr()) };
+}
+
+#[cfg(not(target_os = "linux"))]
+fn name_process() {}

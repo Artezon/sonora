@@ -9,14 +9,16 @@
 //!
 //! The host stays up while any lease is held and for a grace period after the last one goes, so
 //! a track change does not restart it. Then its stdin is closed and it exits, taking the module's
-//! memory with it.
+//! memory with it. A host that takes too long over one call is killed, so a wedged module costs
+//! one failed track rather than a hung player.
 
 #[cfg(feature = "cdm")]
 mod host {
     use std::io::{self, BufReader, BufWriter, Read as _, Write as _};
+    use std::path::{Path, PathBuf};
     use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError, Weak};
     use std::time::{Duration, Instant};
 
     use anyhow::{Context as _, Result, anyhow, bail};
@@ -26,6 +28,13 @@ mod host {
     /// How long the host outlives its last lease. A track change or a preload lands well
     /// inside it, and the next protected track after a longer pause pays one start.
     const GRACE: Duration = Duration::from_secs(30);
+
+    /// How long the host gets to open the module or to answer one request. A decrypt takes a
+    /// couple of milliseconds and a license well under a second, so a host past this is wedged.
+    const PATIENCE: Duration = Duration::from_secs(10);
+
+    /// How often the watcher looks at the host's deadline and its leases.
+    const TICK: Duration = Duration::from_secs(1);
 
     /// How long a closing host gets to exit on its own before it is killed.
     const EXIT_WAIT: Duration = Duration::from_secs(2);
@@ -44,16 +53,19 @@ mod host {
         leases: usize,
         /// When the last lease went, while none is held.
         idle: Option<Instant>,
+        /// Set while one caller starts a host outside the lock. Others wait on [`STARTED`].
+        starting: bool,
     }
 
     static SLOT: Mutex<Slot> = Mutex::new(Slot {
         link: None,
         leases: 0,
         idle: None,
+        starting: false,
     });
 
-    /// Signalled whenever the slot changes, which is what the idle watcher waits on.
-    static CHANGED: Condvar = Condvar::new();
+    /// Signalled when a start ends, either way.
+    static STARTED: Condvar = Condvar::new();
 
     /// A lease on the CDM host. Clones share the host, every call takes the same lock in the
     /// order it arrives, and the host stays up while any lease is alive.
@@ -66,15 +78,21 @@ mod host {
 
     /// One running host process.
     struct Link {
-        pipe: Mutex<Pipe>,
+        io: Mutex<Pipe>,
+        /// The process, locked only for a moment to look at it or kill it, never across a
+        /// call. Taken when the link goes, to be reaped.
+        child: Mutex<Option<Child>>,
         /// Set once the pipe fails, after which nothing is sent and the host is replaced.
         broken: AtomicBool,
+        /// When the request in flight has to be answered by, in milliseconds since `born`, or
+        /// zero while nothing is in flight.
+        deadline: AtomicU64,
+        born: Instant,
         pid: u32,
     }
 
-    /// The host's end of things: the process and both directions of its pipe.
+    /// Both directions of the host's pipe.
     struct Pipe {
-        child: Child,
         /// Taken when the host is closed, since its end of stdin closing is what makes it exit.
         to: Option<BufWriter<ChildStdin>>,
         from: BufReader<ChildStdout>,
@@ -84,20 +102,27 @@ mod host {
 
     /// Locks the slot. Its fields are only ever written together under the lock, so a panic
     /// elsewhere leaves nothing half-done and poisoning is ignored.
-    fn slot() -> MutexGuard<'static, Slot> {
+    fn held() -> MutexGuard<'static, Slot> {
         SLOT.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     impl Cdm {
         /// Starts the host for the CDM [`crate::find`] settles on, or hands back a lease on the
-        /// one already running.
+        /// one already running. The start happens outside the slot lock, so leases elsewhere
+        /// come and go while the module loads.
         pub fn open() -> Result<Self> {
-            let mut slot = slot();
-            if let Some(link) = slot.link.as_ref().filter(|link| link.alive()) {
-                let link = link.clone();
-                slot.leases += 1;
-                slot.idle = None;
-                return Ok(Self { link });
+            let mut slot = held();
+            loop {
+                if let Some(link) = slot.link.as_ref().filter(|link| link.alive()) {
+                    let link = link.clone();
+                    slot.leases += 1;
+                    slot.idle = None;
+                    return Ok(Self { link });
+                }
+                if !slot.starting {
+                    break;
+                }
+                slot = STARTED.wait(slot).unwrap_or_else(PoisonError::into_inner);
             }
             if let Some(stale) = slot.link.take() {
                 log::warn!(
@@ -108,31 +133,16 @@ mod host {
             }
             slot.leases = 0;
             slot.idle = None;
-
-            let Some(found) = crate::find() else {
-                bail!("no widevine module was found, so there is no cdm to open");
-            };
-            log::info!(
-                "widevine: opening the {:?} cdm at {}",
-                found.origin,
-                found.path.display()
-            );
-            let link = Arc::new(Link::start(&found.path).with_context(|| {
-                format!("cannot open the widevine cdm at {}", found.path.display())
-            })?);
-            log::info!("widevine: cdm host {} is up", link.pid);
-            slot.link = Some(link.clone());
-            slot.leases = 1;
-            CHANGED.notify_all();
+            slot.starting = true;
             drop(slot);
 
-            let watched = Arc::downgrade(&link);
-            let watcher = std::thread::Builder::new()
-                .name("widevine-host".into())
-                .spawn(move || watch(watched));
-            if let Err(error) = watcher {
-                log::warn!("widevine: cannot watch the cdm host, it stays up: {error}");
-            }
+            let started = start();
+            let mut slot = held();
+            slot.starting = false;
+            STARTED.notify_all();
+            let link = started?;
+            slot.link = Some(link.clone());
+            slot.leases = 1;
             Ok(Self { link })
         }
 
@@ -190,7 +200,7 @@ mod host {
 
     impl Clone for Cdm {
         fn clone(&self) -> Self {
-            let mut slot = slot();
+            let mut slot = held();
             if slot
                 .link
                 .as_ref()
@@ -207,7 +217,7 @@ mod host {
     impl Drop for Cdm {
         /// Gives the lease back, and starts the grace period when it was the last one.
         fn drop(&mut self) {
-            let mut slot = slot();
+            let mut slot = held();
             if !slot
                 .link
                 .as_ref()
@@ -218,17 +228,36 @@ mod host {
             slot.leases = slot.leases.saturating_sub(1);
             if slot.leases == 0 {
                 slot.idle = Some(Instant::now());
-                CHANGED.notify_all();
             }
         }
+    }
+
+    /// Finds the module and starts a host for it, with a watcher beside it.
+    fn start() -> Result<Arc<Link>> {
+        let Some(found) = crate::find() else {
+            bail!("no widevine module was found, so there is no cdm to open");
+        };
+        log::info!(
+            "widevine: opening the {:?} cdm at {}",
+            found.origin,
+            found.path.display()
+        );
+        let link = Link::start(&found.path)
+            .with_context(|| format!("cannot open the widevine cdm at {}", found.path.display()))?;
+        log::info!("widevine: cdm host {} is up", link.pid);
+        Ok(link)
     }
 
     impl Link {
         /// Starts the host for the module at `module` and waits for it to say the module
         /// opened. A host that fails to open it exits, and its reason becomes the error here.
-        fn start(module: &std::path::Path) -> Result<Self> {
-            let exe = std::env::current_exe().context("cannot find the sonora executable")?;
-            let mut command = Command::new(exe);
+        fn start(module: &Path) -> Result<Arc<Self>> {
+            let mut command = Command::new(executable()?);
+            #[cfg(unix)]
+            if let Ok(named) = std::env::current_exe() {
+                use std::os::unix::process::CommandExt as _;
+                command.arg0(named);
+            }
             command
                 .arg(crate::HOST_ARG)
                 .arg(module)
@@ -241,35 +270,59 @@ mod host {
                 command.creation_flags(CREATE_NO_WINDOW);
             }
             let mut child = command.spawn().context("cannot start the cdm host")?;
-            let pid = child.id();
             let (Some(to), Some(from)) = (child.stdin.take(), child.stdout.take()) else {
-                bail!("the cdm host has no pipe");
+                bail!("cannot reach the cdm host over its pipes");
             };
-            let mut pipe = Pipe {
-                child,
-                to: Some(BufWriter::with_capacity(PIPE_BUFFER, to)),
-                from: BufReader::with_capacity(PIPE_BUFFER, from),
-                scratch: Vec::new(),
-            };
-            pipe.answer(drain)
-                .context("the cdm host exited before it answered")?
-                .map_err(|message| anyhow!(message))?;
-            Ok(Self {
-                pipe: Mutex::new(pipe),
+            let link = Arc::new(Self {
+                io: Mutex::new(Pipe {
+                    to: Some(BufWriter::with_capacity(PIPE_BUFFER, to)),
+                    from: BufReader::with_capacity(PIPE_BUFFER, from),
+                    scratch: Vec::new(),
+                }),
+                pid: child.id(),
+                child: Mutex::new(Some(child)),
                 broken: AtomicBool::new(false),
-                pid,
-            })
+                deadline: AtomicU64::new(0),
+                born: Instant::now(),
+            });
+            let watched = Arc::downgrade(&link);
+            std::thread::Builder::new()
+                .name("widevine-host".into())
+                .spawn(move || watch(watched))
+                .context("cannot watch the cdm host")?;
+
+            let mut pipe = link
+                .io
+                .lock()
+                .map_err(|_| anyhow!("the cdm host is poisoned"))?;
+            link.arm();
+            let hello = pipe.answer(take);
+            link.disarm();
+            let version = hello
+                .context("cannot hear from the cdm host")?
+                .map_err(|message| anyhow!(message))?;
+            if version != wire::VERSION.as_bytes() {
+                bail!(
+                    "the cdm host is version {}, not {}, so sonora was replaced while running",
+                    String::from_utf8_lossy(&version),
+                    wire::VERSION
+                );
+            }
+            drop(pipe);
+            Ok(link)
         }
 
         /// Whether the host can still be asked anything. A host that exited between tracks is
         /// caught here rather than by the next track's challenge. One busy with a call counts as
-        /// alive, so a wedged call cannot hold up the caller.
+        /// alive, which is safe because a call that overruns gets the host killed.
         fn alive(&self) -> bool {
             if self.broken.load(Ordering::Acquire) {
                 return false;
             }
-            match self.pipe.try_lock() {
-                Ok(mut pipe) => matches!(pipe.child.try_wait(), Ok(None)),
+            match self.child.try_lock() {
+                Ok(mut child) => child
+                    .as_mut()
+                    .is_some_and(|child| matches!(child.try_wait(), Ok(None))),
                 Err(TryLockError::WouldBlock) => true,
                 Err(TryLockError::Poisoned(_)) => false,
             }
@@ -277,12 +330,53 @@ mod host {
 
         /// Lets go of a host that has been replaced while stale leases still hold it. Its stdin
         /// closes so a live one exits, and a dead one is reaped rather than left a zombie until
-        /// the last stale lease goes. Skipped when a call holds the pipe.
+        /// the last stale lease goes. The pipe is skipped when a call holds it.
         fn abandon(&self) {
             self.broken.store(true, Ordering::Release);
-            if let Ok(mut pipe) = self.pipe.try_lock() {
+            if let Ok(mut pipe) = self.io.try_lock() {
                 drop(pipe.to.take());
-                pipe.child.try_wait().ok();
+            }
+            if let Ok(mut child) = self.child.try_lock()
+                && let Some(child) = child.as_mut()
+            {
+                child.try_wait().ok();
+            }
+        }
+
+        /// Milliseconds since the link was made, the unit of [`Link::deadline`].
+        fn now(&self) -> u64 {
+            self.born.elapsed().as_millis() as u64 + 1
+        }
+
+        /// Gives the call about to block [`PATIENCE`] to finish.
+        fn arm(&self) {
+            let by = self.now() + PATIENCE.as_millis() as u64;
+            self.deadline.store(by, Ordering::Release);
+        }
+
+        /// Clears the deadline once the call has its answer or has failed.
+        fn disarm(&self) {
+            self.deadline.store(0, Ordering::Release);
+        }
+
+        /// Kills the host when the call in flight has overrun its deadline. The blocked read
+        /// then sees the pipe close, fails, and retires the link.
+        fn enforce(&self) {
+            let by = self.deadline.load(Ordering::Acquire);
+            if by == 0 || self.now() <= by {
+                return;
+            }
+            self.disarm();
+            self.broken.store(true, Ordering::Release);
+            log::warn!(
+                "widevine: cdm host {} did not answer within {}s, killing it",
+                self.pid,
+                PATIENCE.as_secs()
+            );
+            if let Ok(mut child) = self.child.lock()
+                && let Some(child) = child.as_mut()
+            {
+                child.kill().ok();
             }
         }
 
@@ -300,7 +394,8 @@ mod host {
         }
 
         /// Sends one request, where `body` writes exactly `len` payload bytes, and hands back
-        /// the pipe still locked so its answer is the next thing read.
+        /// the pipe still locked so its answer is the next thing read. The deadline runs from
+        /// here until [`Link::receive`] has the answer.
         fn send(
             &self,
             op: u8,
@@ -308,15 +403,19 @@ mod host {
             body: impl FnOnce(&mut BufWriter<ChildStdin>) -> io::Result<()>,
         ) -> Result<MutexGuard<'_, Pipe>> {
             let mut pipe = self
-                .pipe
+                .io
                 .lock()
                 .map_err(|_| anyhow!("the cdm host is poisoned"))?;
             if self.broken.load(Ordering::Acquire) {
                 bail!("the cdm host {} has stopped", self.pid);
             }
+            self.arm();
             match pipe.request(op, len, body) {
                 Ok(()) => Ok(pipe),
-                Err(error) => Err(self.retire(error)),
+                Err(error) => {
+                    self.disarm();
+                    Err(self.retire(error))
+                }
             }
         }
 
@@ -327,7 +426,9 @@ mod host {
             pipe: &mut Pipe,
             read: impl FnOnce(&mut Pipe, usize) -> io::Result<T>,
         ) -> Result<T> {
-            match pipe.answer(read) {
+            let answered = pipe.answer(read);
+            self.disarm();
+            match answered {
                 Ok(Ok(value)) => Ok(value),
                 Ok(Err(message)) => Err(anyhow!(message)),
                 Err(error) => Err(self.retire(error)),
@@ -343,6 +444,28 @@ mod host {
                 self.pid
             );
             anyhow!(error).context("cannot reach the cdm host")
+        }
+    }
+
+    impl Drop for Link {
+        /// Closes stdin so the host exits, and reaps it on a thread of its own, so whoever
+        /// drops the last lease never waits on it.
+        fn drop(&mut self) {
+            if let Ok(pipe) = self.io.get_mut() {
+                drop(pipe.to.take());
+            }
+            let Some(mut child) = self.child.get_mut().ok().and_then(Option::take) else {
+                return;
+            };
+            if matches!(child.try_wait(), Ok(Some(_)) | Err(_)) {
+                return;
+            }
+            let reaper = std::thread::Builder::new()
+                .name("widevine-reap".into())
+                .spawn(move || reap(child));
+            if let Err(error) = reaper {
+                log::warn!("widevine: cannot reap the cdm host: {error}");
+            }
         }
     }
 
@@ -385,24 +508,32 @@ mod host {
         }
     }
 
-    impl Drop for Pipe {
-        /// Closes stdin so the host exits, and reaps it, killing it if it does not go.
-        fn drop(&mut self) {
-            drop(self.to.take());
-            let began = Instant::now();
-            while began.elapsed() < EXIT_WAIT {
-                match self.child.try_wait() {
-                    Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-                    Ok(Some(_)) | Err(_) => return,
-                }
+    /// The file to start the host from. On Linux that is the running image itself, which
+    /// still opens after a package upgrade has replaced the file on disk.
+    #[cfg(target_os = "linux")]
+    fn executable() -> Result<PathBuf> {
+        Ok(PathBuf::from("/proc/self/exe"))
+    }
+
+    /// The file to start the host from. Elsewhere the path is all there is, and a build
+    /// replaced under the app is caught by the version in the host's first answer.
+    #[cfg(not(target_os = "linux"))]
+    fn executable() -> Result<PathBuf> {
+        std::env::current_exe().context("cannot find the sonora executable")
+    }
+
+    /// Waits for a host whose stdin has closed to exit, and kills it if it does not.
+    fn reap(mut child: Child) {
+        let began = Instant::now();
+        while began.elapsed() < EXIT_WAIT {
+            match child.try_wait() {
+                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                Ok(Some(_)) | Err(_) => return,
             }
-            log::warn!(
-                "widevine: cdm host {} did not exit, killing it",
-                self.child.id()
-            );
-            self.child.kill().ok();
-            self.child.wait().ok();
         }
+        log::warn!("widevine: cdm host {} did not exit, killing it", child.id());
+        child.kill().ok();
+        child.wait().ok();
     }
 
     /// Takes an answer's payload as a fresh buffer.
@@ -418,40 +549,28 @@ mod host {
         pipe.from.read_exact(&mut pipe.scratch)
     }
 
-    /// Closes the host once it has been without a lease for [`GRACE`]. Runs on its own thread
-    /// for as long as `watched` is the host in the slot, and returns as soon as it is not.
-    fn watch(watched: std::sync::Weak<Link>) {
-        let mut slot = slot();
+    /// Watches one host for as long as it exists: kills it when a call overruns, and closes it
+    /// once it has been the current host without a lease for [`GRACE`].
+    fn watch(watched: Weak<Link>) {
         loop {
+            std::thread::sleep(TICK);
+            let Some(link) = watched.upgrade() else {
+                return;
+            };
+            link.enforce();
+            let mut slot = held();
             let current = slot
                 .link
                 .as_ref()
-                .is_some_and(|link| std::ptr::eq(Arc::as_ptr(link), watched.as_ptr()));
-            if !current {
+                .is_some_and(|current| Arc::ptr_eq(current, &link));
+            let idle = slot.leases == 0 && slot.idle.is_some_and(|since| since.elapsed() >= GRACE);
+            if current && idle {
+                slot.link = None;
+                slot.idle = None;
+                drop(slot);
+                log::info!("widevine: closing idle cdm host {}", link.pid);
                 return;
             }
-            let left = slot
-                .idle
-                .filter(|_| slot.leases == 0)
-                .map(|since| GRACE.saturating_sub(since.elapsed()));
-            slot = match left {
-                Some(left) if left.is_zero() => {
-                    let link = slot.link.take();
-                    slot.idle = None;
-                    drop(slot);
-                    if let Some(link) = link {
-                        log::info!("widevine: closing idle cdm host {}", link.pid);
-                    }
-                    return;
-                }
-                Some(left) => {
-                    CHANGED
-                        .wait_timeout(slot, left)
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .0
-                }
-                None => CHANGED.wait(slot).unwrap_or_else(PoisonError::into_inner),
-            };
         }
     }
 }
