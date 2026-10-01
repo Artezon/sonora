@@ -425,7 +425,7 @@ impl Render for PlayerBar {
             .into_any_element();
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(self.settings.read(cx));
+        let radius = crate::chrome::window_radius(self.settings.read(cx), cx);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<Pixels> = None;
 
