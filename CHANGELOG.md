@@ -19,6 +19,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The song title and artists in fullscreen have a soft shadow, and the visualizer stops short of
   them, so they stay readable over bright artwork and tall peaks.
 - Wide blurs behind menus, lyrics and the fullscreen view look smoother and cost less to draw.
+- Opening and closing fullscreen now animates in the same way as switching between pages,
+  instead of cutting straight to the new view.
 
 ### Fixed
 
