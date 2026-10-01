@@ -12,6 +12,9 @@
 //! all of it inside the CDM rather than on the way to its host process, so one second of audio
 //! costs about seventy, well inside what the output has queued.
 //!
+//! The track is spooled in memory rather than to a file, because samples are decrypted in place
+//! and cleartext must never reach the disk.
+//!
 //! Once the download is complete, a background pass decrypts every sample no read has reached
 //! and then gives the license back. The CDM lives in a host process that exits when no track
 //! holds a license, so a track that is paused, queued or left behind by another provider does
@@ -45,6 +48,17 @@ const TAIL: u64 = 8 * 1024;
 struct Keys {
     cdm: Cdm,
     key_id: Vec<u8>,
+}
+
+/// What one sample in the spool holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Seal {
+    #[default]
+    Encrypted,
+    Clear,
+    /// Its cleartext could not be written back, so the spool may hold a mix of the two that
+    /// can be neither served nor decrypted again.
+    Lost,
 }
 
 /// Where a track is with its license.
@@ -108,8 +122,8 @@ pub struct Cenc {
     fragments: Vec<Fragment>,
     samples: Vec<Sample>,
     /// Per sample, in `samples` order. A sample must be decrypted exactly once: running
-    /// ciphertext through the cipher twice would corrupt it.
-    cleared: Vec<bool>,
+    /// cleartext through the cipher again would corrupt it.
+    seals: Vec<Seal>,
     license: License,
     /// How many samples have gone through the CDM, and how long that took. Playback pays this
     /// as it reads, so when a track is slow to start these two numbers say whether the CDM is
@@ -156,8 +170,8 @@ impl Cenc {
                             start,
                         });
                     }
-                    self.cleared
-                        .resize(self.samples.len() + samples.len(), false);
+                    self.seals
+                        .resize(self.samples.len() + samples.len(), Seal::Encrypted);
                     self.samples.extend(samples);
                     self.walked = next;
                 }
@@ -229,8 +243,14 @@ impl Cenc {
     /// Decrypts sample `index` in place in the spool, unless it is cleartext already. The
     /// returned time is what the CDM took, or zero when there was nothing to do.
     fn clear(&mut self, spool: &mut Spool, index: usize) -> io::Result<Duration> {
-        if self.cleared[index] {
-            return Ok(Duration::ZERO);
+        match self.seals[index] {
+            Seal::Encrypted => {}
+            Seal::Clear => return Ok(Duration::ZERO),
+            Seal::Lost => {
+                return Err(io::Error::other(
+                    "a sample was lost when its cleartext could not be kept",
+                ));
+            }
         }
         let keys = match &self.license {
             License::Held(keys) => keys,
@@ -255,8 +275,12 @@ impl Cenc {
             .decrypt(&mut bytes, &keys.key_id, &sample.iv, &sample.subs)
             .map_err(|error| io::Error::other(format!("{error:#}")))?;
         let took = began.elapsed();
-        spool.write_at(span.start, &bytes)?;
-        self.cleared[index] = true;
+        if let Err(error) = spool.write_at(span.start, &bytes) {
+            self.seals[index] = Seal::Lost;
+            log::error!("apple: cannot keep the cleartext of sample {index}: {error}");
+            return Err(error);
+        }
+        self.seals[index] = Seal::Clear;
         Ok(took)
     }
 
@@ -265,7 +289,7 @@ impl Cenc {
     /// download is complete, when the index can no longer grow.
     fn pass(&mut self, spool: &mut Spool, next: &mut usize) -> io::Result<Pass> {
         self.index(spool);
-        let found = (*next..self.cleared.len()).find(|&index| !self.cleared[index]);
+        let found = (*next..self.seals.len()).find(|&index| self.seals[index] == Seal::Encrypted);
         let Some(index) = found else {
             let keys = match std::mem::replace(&mut self.license, License::Released) {
                 License::Held(keys) => Some(keys),
@@ -322,6 +346,11 @@ impl Body for Cenc {
         TAIL
     }
 
+    /// Samples are decrypted in place, so the whole track stays in memory.
+    fn confidential(&self) -> bool {
+        true
+    }
+
     /// Decrypts every sample overlapping the range that is not cleartext yet. Bytes outside any
     /// sample are framing, and cost nothing.
     fn ready(&mut self, spool: &mut Spool, range: Range<usize>) -> io::Result<()> {
@@ -330,7 +359,7 @@ impl Body for Cenc {
             .samples
             .partition_point(|sample| sample.end() <= range.start);
         while index < self.samples.len() && self.samples[index].start < range.end {
-            if !self.cleared[index] {
+            if self.seals[index] != Seal::Clear {
                 let took = self.clear(spool, index)?;
                 self.spent.0 += 1;
                 self.spent.1 += took;
@@ -521,7 +550,7 @@ mod tests {
                 iv: [0; 16],
                 subs: Vec::new(),
             }],
-            cleared: vec![false],
+            seals: vec![Seal::Encrypted],
             ..Cenc::default()
         };
         let mut spool = Spool::in_memory(None);

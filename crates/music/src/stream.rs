@@ -76,6 +76,12 @@ pub trait Body: Send + 'static {
     fn ready(&mut self, _spool: &mut Spool, _range: Range<usize>) -> io::Result<()> {
         Ok(())
     }
+
+    /// Whether the spool will hold decrypted media, which has to stay in memory and never
+    /// reach a file, even an unlinked one whose pages get written back.
+    fn confidential(&self) -> bool {
+        false
+    }
 }
 
 /// A body that is already what it should be.
@@ -98,7 +104,7 @@ impl Source for reqwest::Response {
 
 /// The bytes of one track that have arrived so far, as a reader would see them. They live in
 /// an unlinked file in the cache directory, which goes away with the last handle to it, or in
-/// memory when no such file can be made or written.
+/// memory when no such file can be made or written or the body is [`Body::confidential`].
 pub struct Spool {
     len: usize,
     store: Store,
@@ -285,7 +291,10 @@ impl<B: Body> Stream<B> {
     pub fn pulling(source: impl Source, total: Option<u64>, body: B) -> Self {
         let shared = Arc::new(Shared {
             state: Mutex::new(Buffered {
-                spool: Spool::new(total),
+                spool: match body.confidential() {
+                    true => Spool::in_memory(total),
+                    false => Spool::new(total),
+                },
                 total,
                 complete: false,
                 failed: None,
