@@ -3,6 +3,7 @@ use crate::palette::{CoverPalette, of_image};
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
 use futures::AsyncReadExt as _;
+use futures::channel::oneshot;
 use gpui::prelude::*;
 use gpui::{
     App, Asset, AssetLogger, Context, Div, ElementId, Entity, Global, Hsla, ImageCache,
@@ -14,10 +15,11 @@ use image::{
     codecs::{gif::GifDecoder, webp::WebPDecoder},
     imageops,
 };
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
-use std::{collections::HashMap, sync::Arc};
 
 const FILE_PREFIX: &str = "file://";
 
@@ -41,6 +43,10 @@ const SOFT_SIGMA: f32 = 1.6;
 const SMALL_BYTES: usize = 64 * 1024;
 const BIG_BYTES: usize = 256 * 1024;
 const MAX_PENDING: usize = 8;
+/// How many covers decode at once. A decode holds the whole source image, so this bounds
+/// the transient memory, and running decodes on their own threads keeps those buffers in a
+/// couple of malloc arenas rather than one per worker thread.
+const DECODERS: usize = 2;
 /// How long a condemned cover is held before it is dropped. One redraw of every window
 /// is all it takes for anything still on screen to ask for its cover again, and that
 /// redraw is already on its way when the batch is condemned.
@@ -51,6 +57,8 @@ const REPRIEVE: Duration = Duration::from_millis(250);
 const TINT_ITEMS: usize = 4096;
 
 type ArtworkKey = (Resource, u32);
+
+type Job = Box<dyn FnOnce() + Send>;
 
 #[derive(Clone, Hash)]
 struct ArtworkSource {
@@ -125,19 +133,70 @@ impl Asset for ArtworkAssetLoader {
         async move {
             let bytes = bytes.await?;
 
-            let image = match image::guess_format(&bytes) {
-                Ok(format) => Arc::new(RenderImage::new(raster_frames(
+            let Ok(format) = image::guess_format(&bytes) else {
+                let image = svg_renderer.render_single_frame(&bytes, 1.0)?;
+                let palette = of_image(&image);
+                return Ok(Decoded { image, palette });
+            };
+            on_decoder(move || {
+                let image = Arc::new(RenderImage::new(raster_frames(
                     &bytes,
                     format,
                     source.edge,
-                )?)),
-                Err(_) => svg_renderer.render_single_frame(&bytes, 1.0)?,
-            };
-            let palette = of_image(&image);
-
-            Ok(Decoded { image, palette })
+                )?));
+                let palette = of_image(&image);
+                Ok(Decoded { image, palette })
+            })
+            .await
+            .unwrap_or_else(|| Err(ImageCacheError::Asset("artwork decoder stopped".into())))
         }
     }
+}
+
+/// Runs `decode` on one of the `DECODERS` artwork threads and resolves with its result, or
+/// with none when the job died with its thread. A job whose caller stopped waiting is skipped.
+fn on_decoder<T: Send + 'static>(
+    decode: impl FnOnce() -> T + Send + 'static,
+) -> impl std::future::Future<Output = Option<T>> + Send + 'static {
+    static QUEUE: OnceLock<mpsc::Sender<Job>> = OnceLock::new();
+
+    let (sender, receiver) = oneshot::channel();
+    let job: Job = Box::new(move || {
+        if !sender.is_canceled() {
+            sender.send(decode()).ok();
+        }
+    });
+    if let Err(mpsc::SendError(job)) = QUEUE.get_or_init(decoders).send(job) {
+        job();
+    }
+
+    async move { receiver.await.ok() }
+}
+
+/// Starts the artwork decode threads and hands back the queue that feeds them. When none
+/// could start, the queue refuses every job and `on_decoder` runs it in place.
+fn decoders() -> mpsc::Sender<Job> {
+    let (sender, receiver) = mpsc::channel::<Job>();
+    let receiver = Arc::new(Mutex::new(receiver));
+    for index in 0..DECODERS {
+        let receiver = receiver.clone();
+        let started = std::thread::Builder::new()
+            .name(format!("artwork-{index}"))
+            .spawn(move || {
+                loop {
+                    let next = receiver.lock().ok().and_then(|queue| queue.recv().ok());
+                    let Some(job) = next else {
+                        return;
+                    };
+                    job();
+                }
+            });
+        if let Err(error) = started {
+            log::warn!("artwork: cannot start a decoder: {error}");
+        }
+    }
+
+    sender
 }
 
 fn raster_frames(
@@ -168,7 +227,7 @@ fn static_frame(mut decoder: impl ImageDecoder, edge: u32) -> Result<Vec<Frame>,
     let orientation = decoder.orientation()?;
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
-    Ok(vec![Frame::new(artwork_frame(image.into_rgba8(), edge))])
+    Ok(vec![Frame::new(artwork_frame(image, edge))])
 }
 
 fn animated_frames<'a>(
@@ -181,7 +240,7 @@ fn animated_frames<'a>(
             Ok(frame) => {
                 let delay = frame.delay();
                 frames.push(Frame::from_parts(
-                    artwork_frame(frame.into_buffer(), edge),
+                    artwork_frame(DynamicImage::ImageRgba8(frame.into_buffer()), edge),
                     0,
                     0,
                     delay,
@@ -198,24 +257,27 @@ fn animated_frames<'a>(
     Ok(frames)
 }
 
-fn artwork_frame(mut image: RgbaImage, edge: u32) -> RgbaImage {
-    if edge == 0 {
-        bgra(&mut image);
-        return image;
-    }
-
-    let (width, height) = image.dimensions();
+/// Crops a decoded cover to its centre square, scales it down to `edge` and swaps it to
+/// BGRA. The scaling happens in the decoder's own pixel format, so an RGB JPEG only grows
+/// a fourth channel at the size it is drawn. An image no bigger than `edge`, or any image
+/// when `edge` is zero, keeps its size.
+fn artwork_frame(image: DynamicImage, edge: u32) -> RgbaImage {
+    let (width, height) = (image.width(), image.height());
     let side = width.min(height);
-    if side <= edge {
-        bgra(&mut image);
-        return image;
-    }
-
-    let square = imageops::crop_imm(&image, (width - side) / 2, (height - side) / 2, side, side);
-    let mut image = match side > edge.saturating_mul(2) {
-        true => imageops::thumbnail(&*square, edge, edge),
-        false => imageops::resize(&*square, edge, edge, imageops::FilterType::Triangle),
+    let image = match edge == 0 || side <= edge {
+        true => image,
+        false => {
+            let square = match width == height {
+                true => image,
+                false => image.crop_imm((width - side) / 2, (height - side) / 2, side, side),
+            };
+            match side > edge.saturating_mul(2) {
+                true => square.thumbnail_exact(edge, edge),
+                false => square.resize_exact(edge, edge, imageops::FilterType::Triangle),
+            }
+        }
     };
+    let mut image = image.into_rgba8();
     bgra(&mut image);
     image
 }
@@ -856,7 +918,7 @@ mod tests {
     #[test]
     fn artwork_loader_targets_the_requested_edge() {
         let image = RgbaImage::from_pixel(240, 120, Rgba([20, 40, 60, 255]));
-        let frame = artwork_frame(image, 64);
+        let frame = artwork_frame(DynamicImage::ImageRgba8(image), 64);
 
         assert_eq!(frame.width(), 64);
         assert_eq!(frame.height(), 64);
