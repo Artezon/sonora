@@ -85,7 +85,7 @@ pub use motion::{
     veiled,
 };
 pub use notice::Notice;
-pub use palette::{CoverPalette, decode, palette, tint};
+pub use palette::{CoverPalette, palette, tint};
 pub use panel::{Panel, Side};
 pub use picker::Picker;
 pub use pin::{DraggedPin, Pin, PinKind, Pinnable, Spot};

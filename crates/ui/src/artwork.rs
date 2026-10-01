@@ -38,6 +38,8 @@ const MAX_SAMPLE_EDGE: u32 = 4096;
 /// The step decode edges are rounded up to. A power of two would decode up to four times
 /// the pixels drawn.
 const EDGE_STEP: u32 = 64;
+/// The edge a cover is decoded at when only its palette is wanted.
+const PALETTE_EDGE: u32 = 128;
 const GRACE: Duration = Duration::from_secs(5);
 const KEEP_ITEMS: usize = 96;
 const IDLE: Duration = Duration::from_secs(120);
@@ -706,6 +708,28 @@ pub fn cover_palette(url: &str, cx: &App) -> Option<CoverPalette> {
     let resource = resource(url.to_owned());
 
     installed.0.read(cx).tints.get(&resource).copied()
+}
+
+/// The palette of the cover at `url` without keeping its pixels. A cover the cache has
+/// drawn answers from its stored palette, and any other is decoded at `PALETTE_EDGE`,
+/// which is plenty for a hue count and costs a fraction of the full-size frame.
+pub(crate) fn sample_palette(url: SharedString, cx: &mut App) -> Task<CoverPalette> {
+    if let Some(palette) = cover_palette(&url, cx) {
+        return Task::ready(palette);
+    }
+    let load = ArtworkAssetLoader::load(
+        ArtworkSource {
+            resource: resource(url),
+            edge: PALETTE_EDGE,
+        },
+        cx,
+    );
+
+    cx.background_spawn(async move {
+        load.await
+            .map(|decoded| decoded.palette)
+            .unwrap_or_default()
+    })
 }
 
 pub fn artwork_usage(cx: &App) -> Option<(usize, usize)> {
