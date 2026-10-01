@@ -32,6 +32,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   no longer shows a stale copy of the playlist.
 - With rounded window corners, fullscreen's background, visualizer and controls band follow the
   curve instead of filling the corners square. The top and bottom corners now match too.
+- Songs and albums from a Subsonic server show their date added, and sorting by it works.
 
 ## [0.42.0] - 2026-09-29
 
