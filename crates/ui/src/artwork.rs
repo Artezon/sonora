@@ -63,50 +63,42 @@ enum ArtworkAssetLoader {}
 
 type ArtworkResourceLoader = AssetLogger<ArtworkAssetLoader>;
 
-#[derive(Clone)]
-enum ArtworkBytesLoader {}
+/// Reads the encoded bytes of a cover. Nothing holds on to them once the decode has
+/// landed, because the HTTP disk cache makes a second read cheap.
+fn fetch(
+    resource: Resource,
+    cx: &App,
+) -> impl std::future::Future<Output = Result<Vec<u8>, ImageCacheError>> + Send + 'static {
+    let client = cx.http_client();
+    let asset_source = cx.asset_source().clone();
 
-impl Asset for ArtworkBytesLoader {
-    type Source = Resource;
-    type Output = Result<Arc<Vec<u8>>, ImageCacheError>;
-
-    fn load(
-        resource: Self::Source,
-        cx: &mut App,
-    ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
-        let client = cx.http_client();
-        let asset_source = cx.asset_source().clone();
-
-        async move {
-            let bytes = match resource {
-                Resource::Path(path) => std::fs::read(path.as_ref())?,
-                Resource::Uri(uri) => {
-                    let mut response = client.get(uri.as_ref(), ().into(), true).await?;
-                    let mut body = Vec::new();
-                    response.body_mut().read_to_end(&mut body).await?;
-                    if !response.status().is_success() {
-                        let mut body = String::from_utf8_lossy(&body).into_owned();
-                        let first_line = body.lines().next().unwrap_or("").trim_end();
-                        body.truncate(first_line.len());
-                        return Err(ImageCacheError::BadStatus {
-                            uri,
-                            status: response.status(),
-                            body,
-                        });
-                    }
-                    body
+    async move {
+        match resource {
+            Resource::Path(path) => Ok(std::fs::read(path.as_ref())?),
+            Resource::Uri(uri) => {
+                let mut response = client.get(uri.as_ref(), ().into(), true).await?;
+                let mut body = Vec::new();
+                response.body_mut().read_to_end(&mut body).await?;
+                if !response.status().is_success() {
+                    let mut body = String::from_utf8_lossy(&body).into_owned();
+                    let first_line = body.lines().next().unwrap_or("").trim_end();
+                    body.truncate(first_line.len());
+                    return Err(ImageCacheError::BadStatus {
+                        uri,
+                        status: response.status(),
+                        body,
+                    });
                 }
-                Resource::Embedded(path) => {
-                    let Some(data) = asset_source.load(&path)? else {
-                        return Err(ImageCacheError::Asset(
-                            format!("Embedded resource not found: {path}").into(),
-                        ));
-                    };
-                    data.into_owned()
-                }
-            };
-
-            Ok(Arc::new(bytes))
+                Ok(body)
+            }
+            Resource::Embedded(path) => {
+                let Some(data) = asset_source.load(&path)? else {
+                    return Err(ImageCacheError::Asset(
+                        format!("Embedded resource not found: {path}").into(),
+                    ));
+                };
+                Ok(data.into_owned())
+            }
         }
     }
 }
@@ -128,7 +120,7 @@ impl Asset for ArtworkAssetLoader {
         cx: &mut App,
     ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
         let svg_renderer = cx.svg_renderer();
-        let (bytes, _) = cx.fetch_asset::<ArtworkBytesLoader>(&source.resource);
+        let bytes = fetch(source.resource, cx);
 
         async move {
             let bytes = bytes.await?;
@@ -373,18 +365,9 @@ impl ArtworkCache {
             if let Ok(image) = cached.value {
                 cx.drop_image(image, None);
             }
-            self.release_bytes_if_unused(&resource.0, cx);
         }
         for image in std::mem::take(&mut self.condemned_soft) {
             cx.drop_image(image, None);
-        }
-    }
-
-    fn release_bytes_if_unused(&self, resource: &Resource, cx: &mut App) {
-        let is_used = self.items.keys().any(|key| &key.0 == resource)
-            || self.pending.keys().any(|key| &key.0 == resource);
-        if !is_used {
-            cx.remove_asset::<ArtworkBytesLoader>(resource);
         }
     }
 
@@ -439,7 +422,6 @@ impl ArtworkCache {
                 resource: resource.0.clone(),
                 edge: resource.1,
             });
-            self.release_bytes_if_unused(&resource.0, cx);
         }
 
         let mut ages: Vec<(ArtworkKey, Instant, usize)> = self
