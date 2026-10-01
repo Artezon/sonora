@@ -32,7 +32,12 @@ const CACHE_BYTES: usize = 32 * 1024 * 1024;
 /// How far past the budget the cache runs before it trims.
 const CACHE_CEILING: usize = 48 * 1024 * 1024;
 const CACHE_ITEMS: usize = 256;
-const MAX_SAMPLE_EDGE: u32 = 1024;
+/// The largest edge a cover is decoded at. It sits above a fullscreen cover on a 5K screen at
+/// 2x, so it only ever stops a local original of several thousand pixels from being kept whole.
+const MAX_SAMPLE_EDGE: u32 = 4096;
+/// The step decode edges are rounded up to. A power of two would decode up to four times
+/// the pixels drawn.
+const EDGE_STEP: u32 = 64;
 const GRACE: Duration = Duration::from_secs(5);
 const KEEP_ITEMS: usize = 96;
 const IDLE: Duration = Duration::from_secs(120);
@@ -636,6 +641,21 @@ impl ArtworkCache {
         self.insert(key, value, cx);
         Some(image)
     }
+
+    /// The largest decode the cache holds of the same cover at no less than half of `edge`, to
+    /// draw while the one at `edge` loads. A resize that moves a cover to the next edge step
+    /// keeps it on screen instead of flashing the skeleton.
+    fn stand_in(&mut self, resource: &Resource, edge: u32) -> Option<Arc<RenderImage>> {
+        let (_, cached) = self
+            .items
+            .iter_mut()
+            .filter(|((held, size), cached)| {
+                held == resource && *size >= edge / 2 && cached.value.is_ok()
+            })
+            .max_by_key(|((_, size), _)| *size)?;
+        cached.used = Instant::now();
+        cached.value.clone().ok()
+    }
 }
 
 fn blurred(image: &RenderImage) -> Option<Arc<RenderImage>> {
@@ -663,12 +683,11 @@ fn blurred(image: &RenderImage) -> Option<Arc<RenderImage>> {
     Some(Arc::new(RenderImage::new(frames)))
 }
 
+/// The edge a cover drawn at `size` is decoded at: its physical size rounded up to the next
+/// `EDGE_STEP`, so nearby sizes share one decode, and never past `MAX_SAMPLE_EDGE`.
 fn sample_edge(size: Pixels, window: &Window) -> u32 {
     let physical = ((size / px(1.)) * window.scale_factor()).ceil().max(1.) as u32;
-    physical
-        .checked_next_power_of_two()
-        .filter(|edge| *edge <= MAX_SAMPLE_EDGE)
-        .unwrap_or(0)
+    physical.next_multiple_of(EDGE_STEP).min(MAX_SAMPLE_EDGE)
 }
 
 pub(crate) fn resource(url: impl Into<SharedString>) -> Resource {
@@ -853,13 +872,21 @@ impl RenderOnce for Artwork {
                         {
                             return Some(Ok(prepared));
                         }
-                        let loaded = cache
-                            .update(cx, |cache, cx| cache.load_at(&resource, edge, window, cx))?
-                            .map(|image| {
-                                cache.update(cx, |cache, cx| {
-                                    cache.prepare(&resource, edge, soft, image, cx)
-                                })
-                            });
+                        let Some(loaded) = cache
+                            .update(cx, |cache, cx| cache.load_at(&resource, edge, window, cx))
+                        else {
+                            return match soft {
+                                true => None,
+                                false => cache
+                                    .update(cx, |cache, _| cache.stand_in(&resource, edge))
+                                    .map(Ok),
+                            };
+                        };
+                        let loaded = loaded.map(|image| {
+                            cache.update(cx, |cache, cx| {
+                                cache.prepare(&resource, edge, soft, image, cx)
+                            })
+                        });
                         Some(loaded)
                     }
                 }));
