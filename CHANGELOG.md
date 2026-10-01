@@ -16,9 +16,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Local tracks that have multiple artist tags now show each one as its own artist. Artist names
   that only differ in capitalization no longer create duplicate entries.
+- The song title and artists in fullscreen have a soft shadow, and the visualizer stops short of
+  them, so they stay readable over bright artwork and tall peaks.
+- Wide blurs behind menus, lyrics and the fullscreen view look smoother and cost less to draw.
 
 ### Fixed
 
+- A long song title in fullscreen truncates instead of pushing the like button off the edge.
 - Editing a local song's artists returns you to the artist list if the artist page you were
   viewing no longer has any songs.
 - Scrolling through Home stays smooth as new shelves and their covers come into view.
