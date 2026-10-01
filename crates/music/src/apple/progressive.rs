@@ -1,6 +1,6 @@
 //! An Apple Music track that decrypts as it is read, over bytes that are still arriving.
 //!
-//! The waiting, the seeking and the splice are [`crate::stream`]'s, the same buffer every other
+//! The waiting, the seeking and the splice are [`crate::stream`]'s, the same spool every other
 //! provider streams through. What is Apple's own is the [`Cenc`] body: each `moof`/`mdat` pair
 //! is indexed as it completes, and a sample is handed to the CDM the moment a reader asks for
 //! the bytes it covers. CENC is size preserving and every sample carries its own IV, so
@@ -19,10 +19,13 @@ use anyhow::{Result, bail};
 use widevine::Cdm;
 use widevine::cenc::{self, Encrypted, Sample, Step};
 
-use crate::stream::{Body, Reader, Stream};
+use crate::stream::{Body, Reader, Spool, Stream};
 
 /// How much has to be in past the init segment before the decoder is let loose.
 const PREROLL: usize = 256 * 1024;
+
+/// The longest a box header can be: a size, a kind and a 64-bit size behind them.
+const BOX_HEADER: usize = 16;
 
 /// Reads that start this far from the end never wait. A decoder probing for the end of the file
 /// would otherwise hold playback until the whole track had downloaded.
@@ -67,6 +70,9 @@ pub struct Cenc {
     /// One past the last byte accounted for: every byte below this is either cleartext framing
     /// or a sample whose IV is known, which is what makes it safe to serve.
     walked: usize,
+    /// How much of the file has to be in before the walk can take another step. Every read
+    /// asks for a walk, so this is what keeps the asking free while a fragment is arriving.
+    awaited: usize,
     /// Where each fragment starts, in the file and on the media timeline. This is what turns a
     /// position into a place to start reading, so a seek needs no winding.
     fragments: Vec<Fragment>,
@@ -82,29 +88,33 @@ pub struct Cenc {
 }
 
 impl Cenc {
-    /// Indexes whatever has arrived since the last walk. Cheap when nothing has: one box header
-    /// is read and found to be incomplete.
-    fn index(&mut self, buf: &mut [u8]) {
-        let arrived = buf.len();
-        if self.init_end.is_none() {
-            let Some(init) = cenc::read_init(&buf[..arrived]) else {
-                return;
-            };
-            log::debug!(
-                "apple: init segment is {} bytes, {} encrypted track(s)",
-                init.end,
-                init.tracks.len()
-            );
-            // The relabel is applied once and never taken off: the fragment walk only ever
-            // moves forward, so nothing reads the sample entry again.
-            cenc::unlock(buf, &init);
-            self.walked = init.end;
-            self.init_end = Some(init.end);
-            self.timescale = init.timescale;
-            self.tracks = init.tracks;
+    /// Indexes whatever has arrived since the last walk. Free when the box the walk stopped at
+    /// is still short, and otherwise one box header read per box plus each whole fragment.
+    fn index(&mut self, spool: &mut Spool) {
+        let arrived = spool.len();
+        if arrived < self.awaited {
+            return;
+        }
+        if self.init_end.is_none() && !self.init(spool) {
+            return;
         }
         while self.walked < arrived {
-            match cenc::read_fragment(&buf[..arrived], self.walked, &self.tracks) {
+            let Some((kind, end)) = self.whole(spool, self.walked) else {
+                break;
+            };
+            // A fragment is read with the box behind it, which is its mdat when the file is
+            // well formed, so the parser sees the pair it expects.
+            let end = match &kind {
+                b"moof" => match self.whole(spool, end) {
+                    Some((_, behind)) => behind,
+                    None => break,
+                },
+                _ => end,
+            };
+            let Ok(window) = spool.bytes(self.walked..end) else {
+                break;
+            };
+            match cenc::read_fragment(&window, self.walked, &self.tracks) {
                 Step::Fragment {
                     samples,
                     next,
@@ -125,6 +135,65 @@ impl Cenc {
                 Step::Partial => break,
             }
         }
+    }
+
+    /// Reads the init segment once `moov` has arrived whole, relabels its sample entry in the
+    /// spool, and starts the fragment walk behind it. False while `moov` is still arriving.
+    fn init(&mut self, spool: &mut Spool) -> bool {
+        let mut at = 0;
+        let end = loop {
+            let Some((kind, end)) = self.whole(spool, at) else {
+                return false;
+            };
+            if &kind == b"moov" {
+                break end;
+            }
+            at = end;
+        };
+        let Ok(mut front) = spool.bytes(0..end) else {
+            return false;
+        };
+        let Some(init) = cenc::read_init(&front) else {
+            return false;
+        };
+        log::debug!(
+            "apple: init segment is {} bytes, {} encrypted track(s)",
+            init.end,
+            init.tracks.len()
+        );
+        // The relabel is applied once and never taken off: the fragment walk only ever
+        // moves forward, so nothing reads the sample entry again.
+        cenc::unlock(&mut front, &init);
+        if let Err(error) = spool.write_at(0, &front) {
+            log::warn!("apple: cannot relabel the sample entry: {error}");
+            return false;
+        }
+        self.walked = init.end;
+        self.init_end = Some(init.end);
+        self.timescale = init.timescale;
+        self.tracks = init.tracks;
+        true
+    }
+
+    /// The kind and end of the box at `at`, once all of it has arrived. Short of that it
+    /// records how much has to arrive first, so the walk is not retried before then.
+    fn whole(&mut self, spool: &Spool, at: usize) -> Option<([u8; 4], usize)> {
+        let arrived = spool.len();
+        let mut head = [0u8; BOX_HEADER];
+        let read = BOX_HEADER.min(arrived.saturating_sub(at));
+        spool.read_at(at, &mut head[..read]).ok()?;
+        let Some((kind, total)) = cenc::extent(&head[..read]) else {
+            if read < BOX_HEADER {
+                self.awaited = at + BOX_HEADER;
+            }
+            return None;
+        };
+        let end = at.checked_add(total)?;
+        if end > arrived {
+            self.awaited = end;
+            return None;
+        }
+        Some((kind, end))
     }
 
     /// A fragment's decode time as a position, once the timescale is known.
@@ -159,10 +228,10 @@ impl Cenc {
 impl Body for Cenc {
     /// Everything below the walk is either framing or a sample whose IV is known. Once the body
     /// is complete there is nothing more coming, so whatever is left is served as it is.
-    fn limit(&mut self, buf: &mut [u8], complete: bool) -> usize {
-        self.index(buf);
+    fn limit(&mut self, spool: &mut Spool, complete: bool) -> usize {
+        self.index(spool);
         match complete {
-            true => buf.len(),
+            true => spool.len(),
             false => self.walked,
         }
     }
@@ -173,7 +242,7 @@ impl Body for Cenc {
 
     /// Decrypts every sample overlapping the range that is not cleartext yet. Bytes outside any
     /// sample are framing, and cost nothing.
-    fn ready(&mut self, buf: &mut [u8], range: Range<usize>) -> io::Result<()> {
+    fn ready(&mut self, spool: &mut Spool, range: Range<usize>) -> io::Result<()> {
         let Self {
             samples,
             cleared,
@@ -193,13 +262,13 @@ impl Body for Cenc {
             if !cleared[index] {
                 let sample = &samples[index];
                 let span = sample.start..sample.end();
-                let Some(bytes) = buf.get(span.clone()) else {
+                let Ok(bytes) = spool.bytes(span.clone()) else {
                     return Err(io::Error::other("a sample runs past the track"));
                 };
                 let began = Instant::now();
                 let clear = keys
                     .cdm
-                    .decrypt(bytes, &keys.key_id, &sample.iv, &sample.subs)
+                    .decrypt(&bytes, &keys.key_id, &sample.iv, &sample.subs)
                     .map_err(|error| io::Error::other(format!("{error:#}")))?;
                 spent.0 += 1;
                 spent.1 += began.elapsed();
@@ -208,7 +277,7 @@ impl Body for Cenc {
                         "the widevine cdm returned a sample of the wrong length",
                     ));
                 }
-                buf[span].copy_from_slice(&clear);
+                spool.write_at(span.start, &clear)?;
                 cleared[index] = true;
             }
             index += 1;
@@ -251,9 +320,9 @@ impl Media {
         loop {
             let (wanted, arrived) = self
                 .0
-                .with(|cenc, buf| {
-                    cenc.index(buf);
-                    (cenc.init_end.map(|end| end + PREROLL), buf.len())
+                .with(|cenc, spool| {
+                    cenc.index(spool);
+                    (cenc.init_end.map(|end| end + PREROLL), spool.len())
                 })
                 .unwrap_or((None, 0));
             match wanted {
@@ -268,7 +337,7 @@ impl Media {
         }
         let (samples, indexed) = self
             .0
-            .with(|cenc, buf| (cenc.samples.len(), buf.len()))
+            .with(|cenc, spool| (cenc.samples.len(), spool.len()))
             .unwrap_or_default();
         log::info!(
             "apple: prebuffer ready, {} KiB in, {samples} samples indexed",
@@ -301,8 +370,8 @@ impl Media {
     /// where the listener asked to be. A plain file waits for the same bytes inside the read
     /// that follows its seek; a fragmented one has to wait for the index first.
     pub fn entry(&self, at: Duration) -> Option<Entry> {
-        self.0.awaiting(|cenc, buf, complete| {
-            cenc.index(buf);
+        self.0.awaiting(|cenc, spool, complete| {
+            cenc.index(spool);
             cenc.entry(at, complete)
         })
     }
@@ -310,9 +379,9 @@ impl Media {
     /// The init segment, once it has arrived: `ftyp` and `moov`, with the sample entry already
     /// relabelled. It carries the edit list, which is what says where the music starts.
     pub fn header(&self) -> Option<Vec<u8>> {
-        self.0.with(|cenc, buf| {
+        self.0.with(|cenc, spool| {
             let end = cenc.init_end?;
-            buf.get(..end).map(<[u8]>::to_vec)
+            spool.bytes(0..end).ok()
         })?
     }
 
@@ -349,9 +418,13 @@ mod tests {
             cleared: vec![false],
             ..Cenc::default()
         };
-        let mut buf = vec![7u8; 64];
-        assert!(cenc.ready(&mut buf, 0..8).is_ok(), "framing needs no keys");
-        assert!(cenc.ready(&mut buf, 0..32).is_err(), "a sample does");
+        let mut spool = Spool::in_memory(None);
+        spool.append(&[7u8; 64]).unwrap();
+        assert!(
+            cenc.ready(&mut spool, 0..8).is_ok(),
+            "framing needs no keys"
+        );
+        assert!(cenc.ready(&mut spool, 0..32).is_err(), "a sample does");
     }
 
     /// A position is answered with the last fragment that starts at or before it, and with

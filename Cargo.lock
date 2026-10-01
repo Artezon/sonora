@@ -4573,6 +4573,7 @@ dependencies = [
  "serde_norway",
  "storage",
  "symphonia",
+ "tempfile",
  "time",
  "tokio",
  "widevine",
