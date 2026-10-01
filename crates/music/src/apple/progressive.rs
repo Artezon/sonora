@@ -11,6 +11,11 @@
 //! tokio worker or the output callback. A sample costs about one and a half milliseconds, nearly
 //! all of it inside the CDM rather than on the way to its host process, so one second of audio
 //! costs about seventy, well inside what the output has queued.
+//!
+//! Once the download is complete, a background pass decrypts every sample no read has reached
+//! and then gives the license back. The CDM lives in a host process that exits when no track
+//! holds a license, so a track that is paused, queued or left behind by another provider does
+//! not keep it running.
 
 use std::io;
 use std::ops::Range;
@@ -20,7 +25,7 @@ use anyhow::{Result, bail};
 use widevine::Cdm;
 use widevine::cenc::{self, Encrypted, Sample, Step};
 
-use crate::stream::{Body, Reader, Spool, Stream};
+use crate::stream::{Body, Reader, Spool, Stream, WeakStream};
 
 /// How much has to be in past the init segment before the decoder is let loose.
 const PREROLL: usize = 256 * 1024;
@@ -28,14 +33,38 @@ const PREROLL: usize = 256 * 1024;
 /// The longest a box header can be: a size, a kind and a 64-bit size behind them.
 const BOX_HEADER: usize = 16;
 
+/// The pause between two samples of the background pass. It leaves the CDM and the track free
+/// for a moment, so a read on the audio thread never queues behind a run of them.
+const PACE: Duration = Duration::from_micros(500);
+
 /// Reads that start this far from the end never wait. A decoder probing for the end of the file
 /// would otherwise hold playback until the whole track had downloaded.
 const TAIL: u64 = 8 * 1024;
 
-/// The content keys for one track, held for as long as anything can still read it.
+/// The content keys for one track, held until every sample in it is cleartext.
 struct Keys {
     cdm: Cdm,
     key_id: Vec<u8>,
+}
+
+/// Where a track is with its license.
+#[derive(Default)]
+enum License {
+    /// The exchange has not finished yet.
+    #[default]
+    Pending,
+    Held(Keys),
+    /// Every sample was decrypted and the keys went back. Nothing is left to decrypt, so a
+    /// read that still finds ciphertext is a bug.
+    Released,
+}
+
+/// What one step of the background pass did.
+enum Pass {
+    Cleared,
+    /// Nothing was left to decrypt, and these are the keys that were let go. They are dropped
+    /// outside the track's lock.
+    Finished(Option<Keys>),
 }
 
 /// One `moof`/`mdat` pair: where it is in the file, and where it starts in the music.
@@ -81,7 +110,7 @@ pub struct Cenc {
     /// Per sample, in `samples` order. A sample must be decrypted exactly once: running
     /// ciphertext through the cipher twice would corrupt it.
     cleared: Vec<bool>,
-    keys: Option<Keys>,
+    license: License,
     /// How many samples have gone through the CDM, and how long that took. Playback pays this
     /// as it reads, so when a track is slow to start these two numbers say whether the CDM is
     /// the reason.
@@ -197,6 +226,58 @@ impl Cenc {
         Some((kind, end))
     }
 
+    /// Decrypts sample `index` in place in the spool, unless it is cleartext already. The
+    /// returned time is what the CDM took, or zero when there was nothing to do.
+    fn clear(&mut self, spool: &mut Spool, index: usize) -> io::Result<Duration> {
+        if self.cleared[index] {
+            return Ok(Duration::ZERO);
+        }
+        let keys = match &self.license {
+            License::Held(keys) => keys,
+            License::Pending => return Err(io::Error::other("the track has no license loaded")),
+            License::Released => {
+                log::error!(
+                    "apple: sample {index} of {} is still encrypted after the license was released",
+                    self.samples.len()
+                );
+                return Err(io::Error::other(
+                    "a sample is still encrypted after the license was released",
+                ));
+            }
+        };
+        let sample = &self.samples[index];
+        let span = sample.start..sample.end();
+        let Ok(mut bytes) = spool.bytes(span.clone()) else {
+            return Err(io::Error::other("a sample runs past the track"));
+        };
+        let began = Instant::now();
+        keys.cdm
+            .decrypt(&mut bytes, &keys.key_id, &sample.iv, &sample.subs)
+            .map_err(|error| io::Error::other(format!("{error:#}")))?;
+        let took = began.elapsed();
+        spool.write_at(span.start, &bytes)?;
+        self.cleared[index] = true;
+        Ok(took)
+    }
+
+    /// One step of the background pass: decrypts the first sample at or after `next` that no
+    /// read has reached, or releases the license when there is none. Only called once the
+    /// download is complete, when the index can no longer grow.
+    fn pass(&mut self, spool: &mut Spool, next: &mut usize) -> io::Result<Pass> {
+        self.index(spool);
+        let found = (*next..self.cleared.len()).find(|&index| !self.cleared[index]);
+        let Some(index) = found else {
+            let keys = match std::mem::replace(&mut self.license, License::Released) {
+                License::Held(keys) => Some(keys),
+                License::Pending | License::Released => None,
+            };
+            return Ok(Pass::Finished(keys));
+        };
+        self.clear(spool, index)?;
+        *next = index + 1;
+        Ok(Pass::Cleared)
+    }
+
     /// A fragment's decode time as a position, once the timescale is known.
     fn moment(&self, ticks: Option<u64>) -> Option<Duration> {
         let ticks = ticks?;
@@ -244,36 +325,15 @@ impl Body for Cenc {
     /// Decrypts every sample overlapping the range that is not cleartext yet. Bytes outside any
     /// sample are framing, and cost nothing.
     fn ready(&mut self, spool: &mut Spool, range: Range<usize>) -> io::Result<()> {
-        let Self {
-            samples,
-            cleared,
-            keys,
-            spent,
-            ..
-        } = self;
         // Samples are sorted and disjoint, so the first that can overlap is a search away.
-        let mut index = samples.partition_point(|sample| sample.end() <= range.start);
-        if index >= samples.len() || samples[index].start >= range.end {
-            return Ok(());
-        }
-        let Some(keys) = keys.as_ref() else {
-            return Err(io::Error::other("the track has no license loaded"));
-        };
-        while index < samples.len() && samples[index].start < range.end {
-            if !cleared[index] {
-                let sample = &samples[index];
-                let span = sample.start..sample.end();
-                let Ok(mut bytes) = spool.bytes(span.clone()) else {
-                    return Err(io::Error::other("a sample runs past the track"));
-                };
-                let began = Instant::now();
-                keys.cdm
-                    .decrypt(&mut bytes, &keys.key_id, &sample.iv, &sample.subs)
-                    .map_err(|error| io::Error::other(format!("{error:#}")))?;
-                spent.0 += 1;
-                spent.1 += began.elapsed();
-                spool.write_at(span.start, &bytes)?;
-                cleared[index] = true;
+        let mut index = self
+            .samples
+            .partition_point(|sample| sample.end() <= range.start);
+        while index < self.samples.len() && self.samples[index].start < range.end {
+            if !self.cleared[index] {
+                let took = self.clear(spool, index)?;
+                self.spent.0 += 1;
+                self.spent.1 += took;
             }
             index += 1;
         }
@@ -297,16 +357,34 @@ impl Media {
     /// Hands the track its content keys. Until this lands, a read that needs a sample fails
     /// rather than waiting, so it is called before any reader exists.
     ///
-    /// Nothing is decrypted here or in the background. A read decrypts what it lands on, and a
-    /// seek splices straight to its own fragment rather than reading its way there.
+    /// A read decrypts what it lands on, and a seek splices straight to its own fragment rather
+    /// than reading its way there. Once the download is complete a background pass decrypts
+    /// the rest and gives the keys back, see [`Self::release_when_downloaded`].
     pub fn license(&self, cdm: Cdm, key_id: Vec<u8>) -> Result<()> {
         let installed = self.0.with(|cenc, _| {
-            cenc.keys = Some(Keys { cdm, key_id });
+            cenc.license = License::Held(Keys { cdm, key_id });
         });
         match installed {
             Some(()) => Ok(()),
             None => bail!("the track buffer is poisoned"),
         }
+    }
+
+    /// Once the download is complete, decrypts every sample no read has reached on a blocking
+    /// thread and then drops the track's license, which lets the CDM host exit. Call it once
+    /// per download, after [`Self::license`]. It holds the track only weakly, so a track
+    /// dropped meanwhile stops the pass and is not kept downloading.
+    pub fn release_when_downloaded(&self) {
+        let mut weak = self.0.downgrade();
+        tokio::spawn(async move {
+            if !weak.finished().await {
+                return;
+            }
+            let passed = tokio::task::spawn_blocking(move || clear_rest(&weak)).await;
+            if let Err(error) = passed {
+                log::warn!("apple: the decrypt pass stopped: {error}");
+            }
+        });
     }
 
     /// Waits for the init segment and the preroll behind it, so the decoder opens against a
@@ -391,6 +469,39 @@ impl Media {
         self.0
             .with(|cenc, _| cenc.samples.len())
             .unwrap_or_default()
+    }
+}
+
+/// Decrypts what is left of a complete track one sample at a time, letting go of the track
+/// between samples, then releases its license. Stops early when every other handle on the
+/// track is gone, or on a failure, which leaves the keys in place for the reads to use.
+fn clear_rest(weak: &WeakStream<Cenc>) {
+    let began = Instant::now();
+    let mut next = 0;
+    let mut count = 0usize;
+    loop {
+        let Some(stream) = weak.upgrade() else {
+            return;
+        };
+        let step = stream.with(|cenc, spool| cenc.pass(spool, &mut next));
+        drop(stream);
+        match step {
+            Some(Ok(Pass::Cleared)) => count += 1,
+            Some(Ok(Pass::Finished(keys))) => {
+                drop(keys);
+                log::info!(
+                    "apple: decrypted the {count} samples left in {:.1}s, license released",
+                    began.elapsed().as_secs_f32()
+                );
+                return;
+            }
+            Some(Err(error)) => {
+                log::warn!("apple: cannot decrypt ahead, keeping the license: {error}");
+                return;
+            }
+            None => return,
+        }
+        std::thread::sleep(PACE);
     }
 }
 

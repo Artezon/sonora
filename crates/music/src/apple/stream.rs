@@ -92,6 +92,7 @@ pub async fn prepare(http: &reqwest::Client, adam_id: &str, user_token: &str) ->
     log::info!("apple: license accepted");
 
     media.license(cdm, resolved.key_id.clone())?;
+    media.release_when_downloaded();
     media.prime().await?;
     Ok(Loaded {
         media,

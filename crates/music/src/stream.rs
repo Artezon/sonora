@@ -254,6 +254,14 @@ pub struct Stream<B = Plain> {
     arrived: watch::Receiver<usize>,
 }
 
+/// A handle on a [`Stream`] that does not keep it alive, for background work that should stop
+/// once nothing else wants the track. The download stops when the last strong handle goes,
+/// whatever weak ones are left.
+pub struct WeakStream<B = Plain> {
+    shared: Weak<Shared<B>>,
+    arrived: watch::Receiver<usize>,
+}
+
 impl<B> Clone for Stream<B> {
     fn clone(&self) -> Self {
         Self {
@@ -425,6 +433,37 @@ impl<B: Body> Stream<B> {
 
     pub fn failed(&self) -> Option<String> {
         self.shared.state.lock().ok()?.failed.clone()
+    }
+
+    pub fn downgrade(&self) -> WeakStream<B> {
+        WeakStream {
+            shared: Arc::downgrade(&self.shared),
+            arrived: self.arrived.clone(),
+        }
+    }
+}
+
+impl<B: Body> WeakStream<B> {
+    pub fn upgrade(&self) -> Option<Stream<B>> {
+        Some(Stream {
+            shared: self.shared.upgrade()?,
+            arrived: self.arrived.clone(),
+        })
+    }
+
+    /// Waits until the download has ended, whether it finished or broke, without keeping it
+    /// alive in the meantime. False when every strong handle went first.
+    pub async fn finished(&mut self) -> bool {
+        loop {
+            match self.upgrade() {
+                Some(stream) if stream.done() => return true,
+                Some(_) => {}
+                None => return false,
+            }
+            if self.arrived.changed().await.is_err() {
+                return self.upgrade().is_some_and(|stream| stream.done());
+            }
+        }
     }
 }
 
