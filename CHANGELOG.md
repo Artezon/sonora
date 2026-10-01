@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Subsonic providers now properly parse date added, so the column is populated and properly sortable
+  in the song and album views.
+
 ## [0.42.0] - 2026-09-29
 
 ### Added

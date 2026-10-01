@@ -178,6 +178,7 @@ tokio = { version = "1.53", features = [
   "sync",
   "time",
 ] }
+time = { version = "0.3.55", features = ["parsing"] }
 
 [patch.crates-io]
 librespot-audio = { git = "https://github.com/sonorahq/librespot", rev = "d16b7fa014aef21c0786a68f07c685c30df5b646" }
