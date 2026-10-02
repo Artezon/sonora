@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.42.1] - 2026-10-02
+
 ### Added
 
 - Add or remove individual artists with the + button in the local metadata editor.
@@ -21,6 +23,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Wide blurs behind menus, lyrics and the fullscreen view look smoother and cost less to draw.
 - Opening and closing fullscreen now animates in the same way as switching between pages,
   instead of cutting straight to the new view.
+- Sonora uses about a third of the memory it did. On Linux it settles around 110 MiB instead of
+  400 MiB.
 
 ### Fixed
 
@@ -1980,7 +1984,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.42.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.42.1...HEAD
+[0.42.1]: https://github.com/sonorahq/sonora/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/sonorahq/sonora/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/sonorahq/sonora/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/sonorahq/sonora/compare/v0.39.0...v0.40.0
