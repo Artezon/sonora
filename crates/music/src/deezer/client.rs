@@ -3,7 +3,7 @@
 //! account — profile, favorites, playlists — plus the `media.deezer.com/v1/get_url` call that
 //! hands out the encrypted stream urls.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -15,9 +15,11 @@ use tokio::sync::RwLock;
 use tokio::time::Instant;
 
 use crate::deezer::{decrypt, wire};
+use crate::engine::Loudness;
 use crate::{
-    Album, AlbumDetail, Artist, ArtistProfile, HomeFeed, MediaKind, MusicApi, Playlist,
-    PlaylistDetail, SavedArtist, Track, UserProfile, distinct_covers,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, HomeFeed, MediaKind, MusicApi,
+    Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track, UserProfile, distinct_covers,
+    escape,
 };
 
 const GATEWAY: &str = "https://www.deezer.com/ajax/gw-light.php";
@@ -34,6 +36,10 @@ const UPLOAD_FORMAT: &str = "MP3_MISC";
 const LIBRARY_PAGE: u32 = 2000;
 
 const PORTRAIT_LIMIT: usize = 24;
+/// How many related artists lend their albums to a thin rail, and how many albums each
+/// lends.
+const SIMILAR_ARTISTS: usize = 6;
+const SIMILAR_RELEASES: usize = 2;
 
 /// The public api allows fifty calls per five seconds from one address, so calls leave one
 /// at a time this far apart. A call above the limit waits for its slot instead of being
@@ -91,6 +97,18 @@ struct Inner {
     /// Artist portraits already looked up, so a search that ranks the same artists on
     /// every keystroke does not spend the quota on them again.
     portraits: Mutex<HashMap<String, String>>,
+}
+
+/// A track's audio as it starts to arrive, with the key that decrypts it and what the gateway
+/// said about its length and loudness.
+pub struct Opened {
+    pub response: reqwest::Response,
+    pub key: decrypt::Secret,
+    pub duration: Option<Duration>,
+    /// The gateway's `GAIN`. Despite the name it is the track's integrated loudness rather than
+    /// an adjustment, and it lands within about a decibel of Apple's LUFS for the same
+    /// recording.
+    pub loudness: Option<Loudness>,
 }
 
 impl DeezerClient {
@@ -201,7 +219,9 @@ impl DeezerClient {
             .map(|at| at.subsec_nanos())
             .unwrap_or(0);
         let url = format!(
-            "{GATEWAY}?method={method}&input=3&api_version=1.0&api_token={api_token}&cid={cid}"
+            "{GATEWAY}?method={}&input=3&api_version=1.0&api_token={}&cid={cid}",
+            escape::component(method),
+            escape::component(api_token)
         );
         let sid = self.inner.session.read().await.sid.clone();
         let text = self
@@ -336,6 +356,60 @@ impl DeezerClient {
         Ok(())
     }
 
+    /// Up to `SUGGESTIONS` of the artist's own albums without the album the page is already
+    /// showing. One more is asked for, since the page's album may be among them.
+    async fn more_from_artist(&self, album_id: &str, artist_id: &str) -> Result<Vec<Album>> {
+        let page = self
+            .public(&format!(
+                "/artist/{}/albums?limit={}",
+                escape::component(artist_id),
+                SUGGESTIONS + 1
+            ))
+            .await
+            .with_context(|| format!("cannot load more from artist {artist_id}"))?;
+        Ok(page
+            .get("data")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(wire::album)
+            .filter(|album| album.id != album_id)
+            .take(SUGGESTIONS)
+            .collect())
+    }
+
+    /// Up to `SUGGESTIONS` artists Deezer lists as related, for the rail's artists tab.
+    async fn similar_artists(&self, artist_id: &str) -> Result<Vec<SavedArtist>> {
+        let page = self
+            .public(&format!(
+                "/artist/{}/related?limit={SUGGESTIONS}",
+                escape::component(artist_id)
+            ))
+            .await
+            .with_context(|| format!("cannot load artists related to {artist_id}"))?;
+        Ok(page
+            .get("data")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|artist| {
+                Some(SavedArtist {
+                    id: artist.get("id").and_then(wire::id)?,
+                    name: artist.get("name").and_then(Value::as_str)?.to_owned(),
+                    cover: artist
+                        .get("picture_big")
+                        .or_else(|| artist.get("picture_medium"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    added_at: None,
+                })
+            })
+            .take(SUGGESTIONS)
+            .collect())
+    }
+
     /// The full gateway record of one track: metadata plus the `TRACK_TOKEN` playback needs.
     /// A region-locked track comes with a `FALLBACK` record of another release of the same
     /// song, and that one is what plays.
@@ -354,11 +428,8 @@ impl DeezerClient {
     }
 
     /// Opens the audio of a track: track token, then a stream url from `get_url`, then the
-    /// GET itself. Answers the response, the key that decrypts it, and the track's length.
-    pub async fn open_stream(
-        &self,
-        track_id: &str,
-    ) -> Result<(reqwest::Response, decrypt::Secret, Option<Duration>)> {
+    /// GET itself.
+    pub async fn open_stream(&self, track_id: &str) -> Result<Opened> {
         let data = self.track_data(track_id).await?;
         let effective_id = wire::id(&data["SNG_ID"])
             .with_context(|| format!("the deezer track {track_id} names no id"))?;
@@ -366,6 +437,12 @@ impl DeezerClient {
             .filter(|token| !token.is_empty())
             .with_context(|| format!("the deezer track {track_id} is not playable"))?;
         let duration = wire::number(&data, &["DURATION"]).map(Duration::from_secs);
+        let loudness = wire::decimal(&data, &["GAIN"])
+            .filter(|lufs| (-70.0..0.0).contains(lufs))
+            .map(|lufs| Loudness {
+                lufs: lufs as f32,
+                peak: None,
+            });
 
         let license = self.inner.session.read().await.license_token.clone();
         let formats: &[&str] = match effective_id.starts_with('-') {
@@ -388,7 +465,12 @@ impl DeezerClient {
                         .context("the deezer cdn refused the stream")?;
                     let secret = self.inner.secret.get().copied().unwrap_or_default();
                     let key = decrypt::track_key(&effective_id, &secret);
-                    return Ok((response, key, duration));
+                    return Ok(Opened {
+                        response,
+                        key,
+                        duration,
+                        loudness,
+                    });
                 }
                 Ok(None) => last = anyhow::anyhow!("format {format} is not licensed"),
                 Err(error) => last = error,
@@ -436,7 +518,10 @@ impl MusicApi for DeezerClient {
             MediaKind::Artist => "artist",
             MediaKind::Playlist => "playlist",
         };
-        Some(format!("https://www.deezer.com/{kind}/{id}"))
+        Some(format!(
+            "https://www.deezer.com/{kind}/{}",
+            escape::component(id)
+        ))
     }
 
     async fn profile(&self) -> Result<UserProfile> {
@@ -444,13 +529,15 @@ impl MusicApi for DeezerClient {
         Ok(UserProfile {
             id: session.user_id.clone(),
             display_name: session.user_name.clone(),
+            avatar: None,
         })
     }
 
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
-        let detail_path = format!("/artist/{artist_id}");
-        let top_path = format!("/artist/{artist_id}/top?limit=20");
-        let albums_path = format!("/artist/{artist_id}/albums?limit=50");
+        let artist = escape::component(artist_id);
+        let detail_path = format!("/artist/{artist}");
+        let top_path = format!("/artist/{artist}/top?limit=20");
+        let albums_path = format!("/artist/{artist}/albums?limit=50");
         let (detail, top, albums) = tokio::join!(
             self.public(&detail_path),
             self.public(&top_path),
@@ -485,7 +572,7 @@ impl MusicApi for DeezerClient {
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
         let detail = self
-            .public(&format!("/artist/{artist_id}"))
+            .public(&format!("/artist/{}", escape::component(artist_id)))
             .await
             .context("cannot load the artist")?;
         Ok(ArtistProfile {
@@ -519,7 +606,10 @@ impl MusicApi for DeezerClient {
             }
         }
         for id in missing {
-            let Ok(detail) = self.public(&format!("/artist/{id}")).await else {
+            let Ok(detail) = self
+                .public(&format!("/artist/{}", escape::component(&id)))
+                .await
+            else {
                 continue;
             };
             let Some(cover) = detail
@@ -675,7 +765,7 @@ impl MusicApi for DeezerClient {
 
     async fn album(&self, album_id: &str) -> Result<AlbumDetail> {
         let detail = self
-            .public(&format!("/album/{album_id}"))
+            .public(&format!("/album/{}", escape::component(album_id)))
             .await
             .with_context(|| format!("cannot load the album {album_id}"))?;
         let tracks = detail
@@ -689,6 +779,69 @@ impl MusicApi for DeezerClient {
 
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>> {
         Ok(self.album(album_id).await?.tracks)
+    }
+
+    async fn album_catalogue(
+        &self,
+        album_id: &str,
+        artist_id: Option<&str>,
+    ) -> Result<AlbumCatalogue> {
+        let Some(artist_id) = artist_id else {
+            return Ok(AlbumCatalogue::default());
+        };
+        let (more_by, similar) = tokio::join!(
+            self.more_from_artist(album_id, artist_id),
+            self.similar_artists(artist_id),
+        );
+        // Nothing read at all is an error rather than an empty rail, so the catalog does not
+        // keep the empty answer for the rest of the session.
+        let (more_by, similar) = match (more_by, similar) {
+            (Err(error), Err(_)) => return Err(error.context("cannot read any recommendations")),
+            pair => pair,
+        };
+        if let Err(error) = &more_by {
+            log::warn!("deezer: cannot read more from this artist: {error:#}");
+        }
+        if let Err(error) = &similar {
+            log::warn!("deezer: cannot read related artists: {error:#}");
+        }
+        let (more_by, similar) = (more_by.unwrap_or_default(), similar.unwrap_or_default());
+        let mut seen = HashSet::new();
+        let mut liked: Vec<Album> = more_by
+            .into_iter()
+            .filter(|album| seen.insert(album.id.clone()))
+            .collect();
+        // One artist at a time, so a thin rail never holds more than one slot of the
+        // quota while a search waits for its own.
+        if liked.len() < SUGGESTIONS && !similar.is_empty() {
+            for artist in similar.iter().take(SIMILAR_ARTISTS) {
+                if liked.len() >= SUGGESTIONS {
+                    break;
+                }
+                match self.more_from_artist(album_id, &artist.id).await {
+                    Ok(releases) => {
+                        for album in releases.into_iter().take(SIMILAR_RELEASES) {
+                            if liked.len() >= SUGGESTIONS {
+                                break;
+                            }
+                            if seen.insert(album.id.clone()) {
+                                liked.push(album);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "deezer: cannot load albums by similar artist {}: {error:#}",
+                            artist.id
+                        );
+                    }
+                }
+            }
+        }
+        Ok(AlbumCatalogue {
+            also_like: liked,
+            similar,
+        })
     }
 
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
@@ -738,7 +891,11 @@ impl MusicApi for DeezerClient {
         Ok(distinct_covers(&tracks, wanted))
     }
 
-    async fn track_radio(&self, track_id: &str) -> Result<Vec<Track>> {
+    async fn track_radio(
+        &self,
+        track_id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
         let results = self
             .gw(
                 "song.getSearchTrackMix",
@@ -746,17 +903,17 @@ impl MusicApi for DeezerClient {
             )
             .await;
         match results {
-            Ok(results) => Ok(wire::track_list(&results)),
+            Ok(results) => Ok((wire::track_list(&results), None)),
             Err(error) => {
                 log::warn!("deezer: no track radio for {track_id}: {error:#}");
-                Ok(Vec::new())
+                Ok((Vec::new(), None))
             }
         }
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
         let page = self
-            .public(&format!("/search?q={}&limit=50", urlencoded(query)))
+            .public(&format!("/search?q={}&limit=50", escape::component(query)))
             .await
             .context("cannot search deezer")?;
         Ok(wire::track_list(&page))
@@ -764,7 +921,10 @@ impl MusicApi for DeezerClient {
 
     async fn search_albums(&self, query: &str) -> Result<Vec<Album>> {
         let page = self
-            .public(&format!("/search/album?q={}&limit=30", urlencoded(query)))
+            .public(&format!(
+                "/search/album?q={}&limit=30",
+                escape::component(query)
+            ))
             .await
             .context("cannot search deezer albums")?;
         Ok(page
@@ -781,7 +941,7 @@ impl MusicApi for DeezerClient {
         let page = self
             .public(&format!(
                 "/search/playlist?q={}&limit=30",
-                urlencoded(query)
+                escape::component(query)
             ))
             .await
             .context("cannot search deezer playlists")?;
@@ -805,18 +965,4 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// Minimal percent-encoding for a search query, without growing the dependency tree.
-fn urlencoded(query: &str) -> String {
-    let mut encoded = String::with_capacity(query.len());
-    for byte in query.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
 }

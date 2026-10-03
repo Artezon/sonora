@@ -331,7 +331,7 @@ impl Render for Confirm {
                     )
                     .action(
                         Button::new("apply-confirm")
-                            .danger()
+                            .destructive()
                             .label(action)
                             .on_click(cx.listener(|this, _, window, cx| this.apply(window, cx))),
                     )

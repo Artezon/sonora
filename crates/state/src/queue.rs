@@ -395,7 +395,7 @@ impl Queue {
             .past
             .iter()
             .chain(self.current.as_ref())
-            .chain(self.upcoming.iter())
+            .chain(self.upcoming.range(self.manual..))
             .cloned()
             .collect();
         self.changed(cx);
@@ -460,6 +460,17 @@ impl Queue {
         self.changed(cx);
     }
 
+    /// Adds suggestions after the ones already there, for a station topped up before the queue
+    /// has played through it.
+    pub fn extend_similar(&mut self, tracks: Vec<Track>, cx: &mut Context<Self>) {
+        if tracks.is_empty() {
+            return;
+        }
+        self.similar += tracks.len();
+        self.upcoming.extend(tracks);
+        self.changed(cx);
+    }
+
     pub fn clear_similar(&mut self, cx: &mut Context<Self>) {
         if self.similar == 0 {
             return;
@@ -513,6 +524,12 @@ impl Queue {
 
     pub fn has_next(&self) -> bool {
         !self.upcoming.is_empty()
+    }
+
+    /// Whether the track `next` would hand back is a radio suggestion rather than one the queue
+    /// was started with.
+    pub fn next_is_suggested(&self) -> bool {
+        self.queued() == 0 && self.similar > 0
     }
 
     pub fn has_previous(&self) -> bool {

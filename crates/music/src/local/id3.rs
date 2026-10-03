@@ -75,7 +75,7 @@ pub fn read(path: &Path) -> Option<Lenient> {
             b"TPOS" if lenient.disc_number.is_none() => {
                 lenient.disc_number = text(body).and_then(|value| leading_number(&value));
             }
-            b"TYER" | b"TDRC" | b"TDAT" if lenient.year.is_none() => {
+            b"TYER" | b"TDRC" if lenient.year.is_none() => {
                 lenient.year = text(body).and_then(|value| value.get(0..4)?.parse().ok());
             }
             b"APIC" if lenient.cover.is_none() => lenient.cover = picture(body),

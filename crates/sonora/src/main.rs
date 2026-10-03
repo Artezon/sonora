@@ -36,6 +36,20 @@ const FIRST_SIZE: Size<Pixels> = size(px(920.), px(640.));
 const OPEN_COALESCE: Duration = Duration::from_millis(250);
 
 fn main() {
+    memory::tune();
+    if let Some(code) = webview::probed() {
+        exit(code);
+    }
+    // The Widevine host is this executable started again by the app. It must not claim the
+    // instance socket, write the app's log file or start a runtime or a window.
+    if let Some(module) = music::drm::hosted() {
+        logging::console();
+        if let Err(error) = music::drm::host(&module) {
+            log::error!("widevine: the cdm host failed: {error:#}");
+            exit(1);
+        }
+        return;
+    }
     logging::init();
 
     let args: Vec<String> = std::env::args()
@@ -87,10 +101,10 @@ fn main() {
         let database = storage::Database::standard();
         let providers: Vec<Arc<dyn music::MusicProvider>> = vec![
             Arc::new(music::spotify::SpotifyProvider::from_env()),
+            Arc::new(music::apple::AppleProvider::new()),
             Arc::new(music::youtube::YouTubeProvider::new()),
             Arc::new(music::subsonic::SubsonicProvider::new()),
             Arc::new(music::deezer::DeezerProvider::new()),
-            Arc::new(music::apple::AppleProvider::new()),
         ];
         let local_provider: Arc<dyn music::MusicProvider> =
             Arc::new(music::local::LocalProvider::new(
@@ -98,8 +112,10 @@ fn main() {
                     .unwrap_or_else(std::env::temp_dir)
                     .join("sonora"),
                 database.clone(),
+                storage::Cache::standard(),
             ));
         let lyrics: Vec<Arc<dyn LyricsProvider>> = vec![
+            Arc::new(music::local::LocalLyrics),
             Arc::new(music::spotify::SpotifyLyrics::from_env()),
             Arc::new(music::youtube::YouTubeLyrics::new()),
             Arc::new(music::binimum::Binimum::new()),
@@ -123,7 +139,7 @@ fn main() {
             let settings = Sonora::global(cx).settings.read(cx);
             (
                 settings.look(),
-                settings.theme_overrides().clone(),
+                settings.theme_overrides(),
                 settings.language().to_owned(),
                 settings.icons().to_owned(),
                 settings.stillness(),
@@ -217,9 +233,32 @@ fn follow(items: &[String], cx: &mut App) {
 /// With" launch or drop hands us across platforms.
 fn local_path_from_arg(arg: &str) -> Option<PathBuf> {
     match arg.strip_prefix("file://") {
-        Some(rest) => Some(PathBuf::from(percent_decode(rest))),
+        Some(rest) => Some(PathBuf::from(file_uri_path(rest))),
         None => Some(PathBuf::from(arg)),
     }
+}
+
+/// A `file://` URI body turned into a filesystem path. Windows `file:///C:/…`
+/// keeps a slash in front of the drive, which is not a path the OS will open.
+fn file_uri_path(rest: &str) -> String {
+    let decoded = percent_decode(rest);
+    let path = decoded
+        .strip_prefix("localhost")
+        .or_else(|| decoded.strip_prefix("LOCALHOST"))
+        .unwrap_or(decoded.as_str());
+    #[cfg(windows)]
+    {
+        if let Some(drive) = path.strip_prefix('/')
+            && drive
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic)
+            && drive.as_bytes().get(1) == Some(&b':')
+        {
+            return drive.to_owned();
+        }
+    }
+    path.to_owned()
 }
 
 fn percent_decode(value: &str) -> String {
@@ -265,13 +304,17 @@ fn open_window(cx: &mut App) {
         library,
         history: _,
         lyrics: _,
+        network: _,
         pins: _,
         playback,
+        potoken: _,
         queue,
+        scan: _,
         scrobbling: _,
         settings: _,
         updates: _,
         usage: _,
+        wake: _,
     } = Sonora::global(cx);
     let (session, library, playback, queue) = (
         session.clone(),
@@ -293,7 +336,7 @@ fn open_window(cx: &mut App) {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let decorations = settings.window_decorations();
     let look = settings.look();
-    let background = ui::backdrop(look.blur, look.transparent);
+    let background = ui::backdrop(look.blur_window, look.transparent);
 
     cx.open_window(
         WindowOptions {

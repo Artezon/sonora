@@ -123,7 +123,7 @@ impl Tags {
                     Ok(()) => {
                         this.track = None;
                         if has_local_folder {
-                            library.update(cx, |library, cx| library.rescan_local(cx));
+                            library.update(cx, |library, cx| library.rescan_local(false, cx));
                         }
                         Toasts::linked(Outcome::Done, "toast-tags-saved", name, target, cx);
                     }

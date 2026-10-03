@@ -51,6 +51,9 @@ library-no-catalog-albums = Альбомів не знайдено
 library-no-catalog-artists = Виконавців не знайдено
 library-no-matches = Нічого не знайдено
 library-not-loaded = Бібліотека не завантажилася
+library-scanning = Переглядаю ваші теки…
+library-scanning-found = Переглядаю ваші теки… поки { $found }
+library-scanning-progress = Читаю вашу музику… { $read } з { $found }
 library-part-not-loaded = Цей розділ бібліотеки не завантажився
 library-local-unconfigured = Налаштуйте локальну бібліотеку
 
@@ -155,8 +158,6 @@ menu-copy = Скопіювати
 menu-paste = Вставити
 menu-select-all = Вибрати все
 menu-remove-from-queue = Вилучити з черги
-menu-open-playlist = Відкрити плейлист
-menu-play-playlist = Відтворити плейлист
 menu-rename-playlist = Перейменувати плейлист
 menu-delete-playlist = Видалити плейлист
 menu-add-playlist-to-library = Додати до медіатеки
@@ -175,8 +176,6 @@ menu-library-remove-tracks = { $count ->
 }
 menu-make-playlist-public = Зробити публічним
 menu-make-playlist-private = Зробити приватним
-menu-open-album = Відкрити альбом
-menu-play-album = Відтворити альбом
 menu-play-artist = Відтворити виконавця
 
 # playlist editor
@@ -287,7 +286,7 @@ login-signed-in = Ви увійшли як { $name }
 login-failed-title = Не вдалося увійти
 login-problem-region = Spotify не відкриває сесію з країни, де ви перебуваєте. Увійдіть з домашньої країни або змініть країну в акаунті Spotify.
 login-problem-credentials = Збережена сесія Spotify більше недійсна. Увійдіть знову.
-login-problem-network = Sonora не змогла зв'язатися зі Spotify. Перевірте інтернет-з'єднання та спробуйте ще раз.
+login-problem-network = Sonora не змогла зв'язатися з музичним сервісом. Перевірте інтернет-з'єднання та спробуйте ще раз.
 login-problem-cancelled = Ви закрили сторінку браузера, не підтвердивши вхід. Почніть знову.
 login-problem-refused = Spotify відхилив вхід. Зачекайте трохи і спробуйте ще раз.
 login-problem-premium = Sonora відтворює музику через Spotify Premium, а цей акаунт його не має. Увійдіть в акаунт з Premium, щоб продовжити.
@@ -326,9 +325,10 @@ login-password-hint = Пароль
 login-server-submit = Підключитися
 login-account-title = Виберіть акаунт
 login-account-detail = У цій сесії виконано вхід у кілька акаунтів Google. Виберіть той, який має використовувати Sonora.
+login-choose-title = Вхід у { $provider }
+login-choose-detail = Виберіть спосіб входу в { $provider }.
 
 # album and playlist pages
-detail-album = Альбом
 detail-playlist = Плейлист
 detail-play-album = Слухати альбом
 detail-play-playlist = Слухати плейлист
@@ -336,7 +336,6 @@ detail-play-playlist = Слухати плейлист
 # play button
 play-pause = Пауза
 play-resume = Продовжити
-play-loading = Завантаження…
 play-shuffle = Перемішати
 
 # artist page
@@ -359,6 +358,10 @@ artist-filter-all = Усі
 artist-filter-albums = Альбоми
 artist-filter-singles = Сингли
 artist-filter-eps = EP
+artist-appears-on = З'являється в
+album-also-like = Вам також може сподобатися
+album-tab-albums = Альбоми
+album-tab-artists = Артисти
 
 # user profile page
 user-eyebrow = Профіль
@@ -386,8 +389,6 @@ release-meta = { $year } • { $kind }
 
 # home page
 home-quick-picks = Швидкий вибір
-home-listen-again = Послухати знову
-home-quick-picks-eyebrow = Почніть із треку
 home-quick-picks-empty = Додайте кілька треків, і вони з'являться тут
 
 # search page
@@ -498,6 +499,7 @@ month-11 = лист.
 month-12 = груд.
 
 # settings
+settings-search = Пошук у налаштуваннях
 settings-tab-general = Загальні
 settings-tab-appearance = Вигляд
 settings-tab-playback = Відтворення
@@ -508,11 +510,19 @@ settings-theme-detail = Кольорова палітра застосунку
 settings-opacity = Непрозорість
 settings-opacity-detail = Налаштуйте непрозорість фону застосунку
 settings-opacity-value = { $percent }%
-settings-theme-config = Відкрити конфіг
+settings-theme-folder = Відкрити конфіг
 settings-adaptive = Адаптивна тема
 settings-adaptive-detail = Підфарбовувати палітру обкладинкою альбому, що грає
+settings-ambient = Атмосферне тло
+settings-ambient-detail = Заливати повноекранний режим кольорами обкладинки
+settings-ambient-motion = Рух тла
+settings-ambient-motion-detail = Плавно рухати кольори тла, а не тримати їх нерухомими
 settings-visualizer = Візуалізатор
-settings-visualizer-detail = Показувати смужки спектра позаду обкладинки в повноекранному режимі
+settings-visualizer-detail = Як малюється спектр позаду обкладинки в повноекранному режимі
+settings-visualizer-style-none = Вимкнено
+settings-visualizer-style-bars = Смужки
+settings-visualizer-style-wave = Хвиля
+settings-visualizer-style-both = Смужки і хвиля
 settings-fullscreen-controls-autohide = Ховати керування в повноекранному режимі
 settings-fullscreen-controls-autohide-detail = Плавно ховати керування відтворенням, коли в повноекранному режимі немає дій
 settings-icons = Набір піктограм
@@ -525,8 +535,10 @@ settings-saver = Енергозбереження
 settings-saver-detail = Обмежувати частоту кадрів анімації, коли Sonora не у фокусі, починаючи з наступного запуску
 settings-corners = Кути
 settings-corners-detail = Наскільки заокруглені поверхні та елементи
-settings-blur = Розмиття
-settings-blur-detail = Малює вікно поверх розмитого робочого стола. Потрібна непрозорість нижче 100%
+settings-blur = Розмиття інтерфейсу
+settings-blur-detail = Матове скло для меню та плаваючих елементів
+settings-blur-window = Розмиття вікна
+settings-blur-window-detail = Малює вікно поверх розмитого робочого стола. Потрібна непрозорість нижче 100%
 settings-font = Розмір шрифту
 settings-font-detail = Базовий розмір тексту, решта масштабується разом із ним
 settings-font-value = { $size } px
@@ -658,6 +670,7 @@ settings-group-accounts = Акаунти
 settings-group-library = Медіатека
 settings-group-text = Текст
 settings-group-motion = Анімація
+settings-group-fullscreen = Повноекранний режим
 settings-group-title-bar = Заголовок вікна
 settings-group-window-style = Стиль вікна
 settings-equalizer = Еквалайзер
@@ -722,6 +735,9 @@ settings-choose-folder = Вибрати папку…
 settings-add-folder = Додати папку
 settings-remove-folder = Видалити папку
 settings-rescan = Пересканувати
+settings-scan-walking = Сканую…
+settings-scan-progress = { $percent }%
+settings-scan-done = Готово за { $seconds } с
 settings-tab-about = Про програму
 settings-version = Версія
 settings-version-detail = Складання Sonora, яке зараз запущено
@@ -851,3 +867,10 @@ nav-pins-alphabetical = За абеткою
 nav-pins-kind = За типом
 nav-show-full-library = Показувати всю медіатеку
 nav-return-top = Догори
+
+# trouble
+trouble-offline = Немає з'єднання
+trouble-offline-detail = Перевірте підключення до інтернету та спробуйте ще раз.
+trouble-not-loaded = Не вдалося завантажити
+trouble-retry = Повторити
+toast-offline = Немає з'єднання. Нічого не відтворюватиметься, доки воно не повернеться.

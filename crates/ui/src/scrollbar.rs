@@ -139,6 +139,7 @@ pub struct Scrollbar {
     hovered: bool,
     always_visible: bool,
     track_inset: Pixels,
+    track_top: Pixels,
     maximum: Option<Pixels>,
     hover_guard: Option<HoverGuard>,
     scroll_guard: Option<ScrollGuard>,
@@ -159,6 +160,7 @@ impl Scrollbar {
             hovered: false,
             always_visible: false,
             track_inset: Pixels::ZERO,
+            track_top: Pixels::ZERO,
             maximum: None,
             hover_guard: None,
             scroll_guard: None,
@@ -207,12 +209,37 @@ impl Scrollbar {
         self
     }
 
+    /// Pins the track's top below a floating header, so the bar never slides under
+    /// a blur. Unlike the inset this only moves the top, never the bottom.
+    pub fn track_top(mut self, top: Pixels) -> Self {
+        self.track_top = top.max(Pixels::ZERO);
+        self
+    }
+
+    /// The [`Self::track_top`] counterpart for a bar that already exists. Notifies only
+    /// when the offset actually moved.
+    pub fn set_track_top(&mut self, top: Pixels, cx: &mut Context<Self>) -> bool {
+        let top = top.max(Pixels::ZERO);
+        if self.track_top == top {
+            return false;
+        }
+        self.track_top = top;
+        cx.notify();
+        true
+    }
+
     pub fn remember_offset(&mut self, offset: Pixels) {
         self.seen = offset;
     }
 
     pub fn nudges(&self) -> u64 {
         self.nudges
+    }
+
+    /// Whether the pointer is parked on the bar. Fullscreen reads this to keep
+    /// its chrome awake while the reader holds the scrollbar.
+    pub fn hovered(&self) -> bool {
+        self.hovered
     }
 
     /// Records that the reader moved the view themselves. A precise scroll needs
@@ -538,7 +565,7 @@ impl Render for Scrollbar {
         let theme = *cx.theme();
         let content = viewport + hidden;
         let progress = (offset / hidden).clamp(0., 1.);
-        let track = (viewport - self.track_inset * 2.).max(Pixels::ZERO);
+        let track = (viewport - self.track_inset * 2. - self.track_top).max(Pixels::ZERO);
         let thumb = (track * (viewport / content)).max(MIN_THUMB).min(track);
         let travel = track - thumb;
         let resting = match self.always_visible || self.awake || self.hovered {
@@ -559,7 +586,7 @@ impl Render for Scrollbar {
             .id("scrollbar")
             .occlude()
             .absolute()
-            .top(self.track_inset)
+            .top(self.track_inset + self.track_top)
             .right(-REACH)
             .w(BAR + REACH)
             .h(track)
@@ -573,7 +600,11 @@ impl Render for Scrollbar {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                    let local = event.position.y - jump.top() - this.track_inset - thumb / 2.;
+                    let local = event.position.y
+                        - jump.top()
+                        - this.track_inset
+                        - this.track_top
+                        - thumb / 2.;
                     let fraction = (local / travel).clamp(0., 1.);
                     let offset = hidden * fraction;
                     this.stirred();

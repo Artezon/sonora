@@ -1,6 +1,6 @@
 mod language;
 
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fluent_bundle::concurrent::FluentBundle;
@@ -11,7 +11,10 @@ pub use fluent_bundle::FluentArgs;
 pub use language::{AUTO, Language, resolve};
 
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
-static BUNDLES: LazyLock<Vec<FluentBundle<FluentResource>>> = LazyLock::new(build);
+/// One bundle per locale, each parsed the first time a lookup needs it. An ordinary run only
+/// ever parses the active language and the English fallback.
+static BUNDLES: [OnceLock<FluentBundle<FluentResource>>; Language::ALL.len()] =
+    [const { OnceLock::new() }; Language::ALL.len()];
 
 pub trait Value<'a> {
     fn value(self) -> FluentValue<'a>;
@@ -88,8 +91,23 @@ pub fn lookup(key: &str, args: Option<&FluentArgs>) -> SharedString {
     SharedString::from(key.to_owned())
 }
 
+pub fn translate(key: &str) -> SharedString {
+    let active = language();
+    if let Some(text) = format(active, key, None) {
+        return text;
+    }
+    if active != Language::English
+        && let Some(text) = format(Language::English, key, None)
+    {
+        return text;
+    }
+    SharedString::from(key.to_owned())
+}
+
 fn format(language: Language, key: &str, args: Option<&FluentArgs>) -> Option<SharedString> {
-    let bundle = BUNDLES.get(language as usize)?;
+    let bundle = BUNDLES
+        .get(language as usize)?
+        .get_or_init(|| bundle(language));
     let pattern = bundle.get_message(key)?.value()?;
 
     let mut errors = Vec::new();
@@ -98,10 +116,6 @@ fn format(language: Language, key: &str, args: Option<&FluentArgs>) -> Option<Sh
         log::warn!("i18n: cannot format {key}: {error}");
     }
     Some(SharedString::from(text.into_owned()))
-}
-
-fn build() -> Vec<FluentBundle<FluentResource>> {
-    Language::ALL.into_iter().map(bundle).collect()
 }
 
 fn bundle(language: Language) -> FluentBundle<FluentResource> {
@@ -179,6 +193,7 @@ mod tests {
             (Language::Russian, ["1 трек", "2 трека", "5 треков"]),
             (Language::Ukrainian, ["1 трек", "2 треки", "5 треків"]),
             (Language::Polish, ["1 utwór", "2 utwory", "5 utworów"]),
+            (Language::Czech, ["1 skladba", "2 skladby", "5 skladeb"]),
         ];
 
         for (language, expected) in cases {
@@ -188,5 +203,12 @@ mod tests {
                 assert_eq!(format(language, "count-songs", Some(&args)).unwrap(), text);
             }
         }
+    }
+
+    #[test]
+    fn translate_resolves_known_key_or_preserves_literal() {
+        assert_eq!(translate("home-quick-picks"), "Quick picks");
+        assert_eq!(translate("home-recently-added"), "Recently added");
+        assert_eq!(translate("Top 50 - Global"), "Top 50 - Global");
     }
 }

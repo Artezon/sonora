@@ -137,15 +137,21 @@ remove=()
 [ -n "$assignees" ] && add+=(--add-assignee "$assignees")
 has_label 'needs triage' && remove+=(--remove-label 'needs triage')
 
+# Where the log lives is only worth saying to someone who was asked for one.
+where=""
+if grep -qi 'log' <<<"$missing"; then
+  where="
+The log is at \`~/.local/state/sonora/sonora.log\` on Linux, \`~/Library/Caches/sonora/sonora.log\` on macOS and \`%LOCALAPPDATA%\\sonora\\sonora.log\` on Windows. Reproduce the problem, then paste the tail of it. Starting Sonora with \`SONORA_LOG=debug\` makes it more detailed.
+"
+fi
+
 comment=""
 if [ -n "$missing" ] && ! asked_already; then
   comment="$marker
 Thanks for the report. Before anyone can look into this, it needs:
 
 $(sed 's/^/- /' <<<"$missing")
-
-The log is at \`~/.local/state/sonora/sonora.log\` on Linux, \`~/Library/Caches/sonora/sonora.log\` on macOS and \`%LOCALAPPDATA%\\sonora\\sonora.log\` on Windows. Reproduce the problem, then paste the tail of it. Starting Sonora with \`SONORA_LOG=debug\` makes it more detailed.
-
+$where
 Edit the issue or reply with the missing pieces and the label comes off. Left as it is, this closes itself in a couple of weeks.
 
 > [!NOTE]

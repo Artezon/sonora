@@ -484,7 +484,7 @@ impl Render for LoginView {
             SessionState::Authorizing(Some(SignInPrompt::Accounts(_))) => t!("login-signed-out"),
             SessionState::Authorizing(_) => t!("login-authorizing"),
             SessionState::SignedIn(profile) => t!("login-signed-in", name = &profile.display_name),
-            SessionState::Failed(_) => t!("login-signed-out"),
+            SessionState::Offline(_) | SessionState::Failed(_) => t!("login-signed-out"),
         };
 
         let prompt = match &state {
@@ -509,7 +509,7 @@ impl Render for LoginView {
         let orphan = asking && guest.is_none();
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(window, Sonora::global(cx).settings.read(cx));
+        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx, window);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<Pixels> = None;
 

@@ -10,6 +10,7 @@ use ui::{ActiveTheme as _, Mode, Popovers, Scrollbar, Scroller, Skeleton, Text, 
 use crate::chrome::{Chrome, Toolbar, Tooled, tools};
 use crate::shared::cells;
 use crate::shared::shelves::Shelves;
+use crate::shared::trouble;
 
 const TILE: Pixels = px(220.);
 const STEADY: Pixels = px(0.5);
@@ -86,8 +87,39 @@ impl Tooled for GenreView {
     }
 }
 
+impl GenreView {
+    /// The page a genre that did not load shows instead of its shelves. Opening the same genre
+    /// again is the retry, since a failed load leaves the page empty.
+    fn failure(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let id = self.detail.read(cx).id()?.to_owned();
+        let reason = match trouble::unreachable(&id, cx) {
+            true => None,
+            false => Some(self.detail.read(cx).error()?.to_owned()),
+        };
+        let detail = self.detail.clone();
+
+        Some(
+            trouble::lost(
+                "genre-lost",
+                t!("trouble-not-loaded"),
+                reason.as_deref(),
+                move |_, _, cx| {
+                    let id = id.clone();
+                    detail.update(cx, |detail, cx| detail.open(&id, cx));
+                },
+            )
+            .size_full()
+            .into_any_element(),
+        )
+    }
+}
+
 impl Render for GenreView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(failure) = self.failure(cx) {
+            return div().flex().flex_col().size_full().child(failure);
+        }
+
         let theme = *cx.theme();
         let pad = theme.metrics.inset;
         let room = cells::content_width(window, pad * 2., cx);
@@ -98,7 +130,6 @@ impl Render for GenreView {
         let detail = self.detail.read(cx);
         let loading = detail.is_loading();
         let title = detail.name().unwrap_or_default().to_owned();
-        let error = detail.error().map(str::to_owned);
         let sections = detail.sections();
         let empty = !loading && sections.is_empty();
         let (mode, width) = (self.mode, self.width);
@@ -119,11 +150,6 @@ impl Render for GenreView {
                             .child(SharedString::from(title)),
                     )
                     .when(loading, |this| this.child(Skeleton::new().w_full().h(TILE)))
-                    .children(error.map(|error| {
-                        div()
-                            .text_color(theme.danger)
-                            .child(SharedString::from(error))
-                    }))
                     .when(empty, |this| this.child(vacant(t!("genre-empty"), cx)))
                     .child(shelves),
             ),

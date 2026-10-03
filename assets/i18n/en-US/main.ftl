@@ -51,6 +51,9 @@ library-no-catalog-albums = No albums found
 library-no-catalog-artists = No artists found
 library-no-matches = No matches
 library-not-loaded = Your library did not load
+library-scanning = Looking through your folders…
+library-scanning-found = Looking through your folders… { $found } so far
+library-scanning-progress = Reading your music… { $read } of { $found }
 library-part-not-loaded = This part of your library did not load
 library-local-unconfigured = Configure your local library
 
@@ -102,6 +105,7 @@ menu-add-tracks-to-playlist = { $count ->
 menu-new-playlist = New playlist
 menu-edit-tags = Edit tags
 menu-no-playlists = No playlists
+menu-search-playlists = Search a playlist
 menu-add-to-library = Add to Favorites
 menu-add-tracks-to-library = { $count ->
     [one] Add { $count } track to Favorites
@@ -149,8 +153,6 @@ menu-copy = Copy
 menu-paste = Paste
 menu-select-all = Select all
 menu-remove-from-queue = Remove from queue
-menu-open-playlist = Open playlist
-menu-play-playlist = Play playlist
 menu-rename-playlist = Rename playlist
 menu-delete-playlist = Delete playlist
 menu-add-playlist-to-library = Add to Library
@@ -167,8 +169,6 @@ menu-library-remove-tracks = { $count ->
 }
 menu-make-playlist-public = Make public
 menu-make-playlist-private = Make private
-menu-open-album = Open album
-menu-play-album = Play album
 menu-play-artist = Play artist
 
 # playlist editor
@@ -277,7 +277,7 @@ login-signed-in = Signed in as { $name }
 login-failed-title = Sign-in failed
 login-problem-region = Spotify will not open a session from the country you are in. Sign in from your home country, or change the country on your Spotify account.
 login-problem-credentials = Your saved Spotify session is no longer valid. Sign in again to continue.
-login-problem-network = Sonora could not reach Spotify. Check your internet connection and try again.
+login-problem-network = Sonora could not reach the music service. Check your internet connection and try again.
 login-problem-cancelled = You closed the browser page before approving the sign-in. Start again to finish.
 login-problem-refused = Spotify turned down the sign-in. Wait a moment and try again.
 login-problem-premium = Sonora streams through Spotify Premium, and this account does not have it. Sign in with a Premium account to continue.
@@ -316,9 +316,10 @@ login-password-hint = Password
 login-server-submit = Connect
 login-account-title = Choose an account
 login-account-detail = This session is signed in to more than one Google account. Pick the one Sonora should use.
+login-choose-title = Sign in to { $provider }
+login-choose-detail = Choose how to sign in to { $provider }.
 
 # album and playlist pages
-detail-album = Album
 detail-playlist = Playlist
 detail-play-album = Play album
 detail-play-playlist = Play playlist
@@ -326,7 +327,6 @@ detail-play-playlist = Play playlist
 # play button
 play-pause = Pause
 play-resume = Resume
-play-loading = Loading…
 play-shuffle = Shuffle
 
 # artist page
@@ -348,6 +348,11 @@ artist-filter-all = All
 artist-filter-albums = Albums
 artist-filter-singles = Singles
 artist-filter-eps = EPs
+artist-appears-on = Appears on
+album-also-like = You might also like
+album-tab-albums = Albums
+album-tab-artists = Artists
+album-label = ℗ { $label }
 
 # user profile page
 user-eyebrow = Profile
@@ -372,9 +377,12 @@ release-meta = { $year } • { $kind }
 
 # home page
 home-quick-picks = Quick picks
-home-listen-again = Listen again
-home-quick-picks-eyebrow = Start from a song
 home-quick-picks-empty = Like a few songs and they will show up here
+home-recently-added = Recently added
+home-playlists = Playlists
+home-favorite-albums = Favorite albums
+home-artists = Artists
+home-collection-albums = Albums from your collection
 
 # search page
 search-placeholder = What do you want to listen to?
@@ -454,6 +462,11 @@ count-tracks =
        *[other] { $count } tracks
     }
 
+# running times
+runtime-seconds = { $seconds }s
+runtime-minutes = { $minutes }m { $seconds }s
+runtime-hours = { $hours }h { $minutes }m
+
 # dates
 date-just-now = Just now
 date-minute-ago = A minute ago
@@ -476,6 +489,7 @@ month-11 = Nov
 month-12 = Dec
 
 # settings
+settings-search = Search settings
 settings-tab-general = General
 settings-tab-appearance = Appearance
 settings-tab-playback = Playback
@@ -486,15 +500,26 @@ settings-theme-detail = Choose the application colour palette
 settings-opacity = Opacity
 settings-opacity-detail = Adjust the app background opacity
 settings-opacity-value = { $percent }%
-settings-theme-config = Open config
+settings-theme-folder = Open folder
+settings-theme-unavailable = This theme can be applied only when adaptive theme is disabled
 settings-adaptive = Adaptive theme
 settings-adaptive-detail = Tint the palette with the artwork of the playing album
+settings-ambient = Ambient background
+settings-ambient-detail = Fill the fullscreen player with colours drawn from the cover
+settings-ambient-motion = Ambient motion
+settings-ambient-motion-detail = Drift the ambient colours instead of holding them still
 settings-visualizer = Visualizer
-settings-visualizer-detail = Show spectrum bars behind fullscreen artwork
+settings-visualizer-detail = How the spectrum is drawn behind fullscreen artwork
+settings-visualizer-style-none = Off
+settings-visualizer-style-bars = Bars
+settings-visualizer-style-wave = Wave
+settings-visualizer-style-both = Bars and wave
+settings-visualizer-absolute = Ignore volume
+settings-visualizer-absolute-detail = Draw the spectrum at the track's own level, however loud Sonora plays it
 settings-fullscreen-controls-autohide = Hide fullscreen controls
 settings-fullscreen-controls-autohide-detail = Fade out playback controls when fullscreen is inactive
-settings-show-os-fullscreen-btn = Show OS fullscreen button
-settings-show-os-fullscreen-btn-detail = Show the button to toggle system fullscreen mode
+settings-show-os-fullscreen-btn = Show system fullscreen button
+settings-show-os-fullscreen-btn-detail = Show a button to toggle OS fullscreen mode in addition to the F11 key
 settings-icons = Icon pack
 settings-icons-detail = Choose the icon set the interface draws from
 settings-motion = Reduce motion
@@ -505,13 +530,16 @@ settings-saver = Battery saving
 settings-saver-detail = Cap the frame rate of animations while Sonora is not focused, applied from the next launch
 settings-corners = Corners
 settings-corners-detail = How rounded surfaces and controls are
-settings-blur = Blur
-settings-blur-detail = Draw the window over a blurred desktop. Needs an opacity below 100%
+settings-blur = Blur UI
+settings-blur-detail = Frost the menus and floating controls over whatever they cover
+settings-blur-window = Blur window
+settings-blur-window-detail = Draw the window over a blurred desktop. Needs an opacity below 100%
 settings-font = Font size
 settings-font-detail = Base text size, everything else scales with it
 settings-font-value = { $size } px
 settings-startup = Show on startup
 settings-startup-detail = The screen Sonora opens on launch
+settings-startup-no-guest = Unavailable in Guest mode
 settings-entries = Sidebar entries
 settings-entries-detail = The sections listed in the sidebar
 settings-entries-pick = Choose entries
@@ -536,8 +564,10 @@ settings-window-rounding = Window corners
 settings-window-rounding-detail = How rounded the window's own corners are
 settings-controls-side = Controls side
 settings-controls-side-detail = Which end of the title bar the controls sit on
-settings-close-to-tray = Keep playing when closed
-settings-close-to-tray-detail = Keep Sonora in the system tray and continue playing after its window closes
+settings-close-to-tray = Keep running in the background
+settings-close-to-tray-detail = Keep Sonora running and playing after its window closes
+settings-tray-icon = Show in the system tray
+settings-tray-icon-detail = Put an icon with playback controls in the system tray
 settings-discord = Show on Discord
 settings-discord-detail = Put the track you are playing on your Discord profile
 settings-discord-name = Status name
@@ -569,12 +599,14 @@ settings-gapless = Gapless playback
 settings-gapless-detail = Runs one track into the next without a pause, the way an album was sequenced
 settings-sleep = Sleep timer
 settings-sleep-detail = Lets the music stop on its own after a set time, so it can play you to sleep
+settings-stay-awake = Stay awake during playback
+settings-stay-awake-detail = Prevent sleep while playing and keep the display on when playing in fullscreen
 settings-sleep-configure = Configure…
 settings-sleep-off = Off
 settings-sleep-end-of-track = End of track
 settings-sleep-minutes = { $count } mins
 settings-widevine = Widevine module
-settings-widevine-detail = Apple Music tracks are encrypted and need Google's Widevine module. Sonora uses the copy a browser here already has, or one it downloaded from Google with your consent.
+settings-widevine-detail = Apple Music tracks are encrypted and need Google's Widevine module. Sonora uses one it downloaded from Google with your consent, or else the copy a browser here already has.
 settings-widevine-none = Apple Music tracks are encrypted and need Google's Widevine module. No browser here has one, so Sonora can download it from Google with your consent.
 settings-widevine-looking = Looking…
 settings-widevine-asking = Waiting for your answer
@@ -590,6 +622,7 @@ confirm-uninstall-widevine-title = Uninstall the Widevine module?
 confirm-uninstall-widevine = Sonora deletes the copy it downloaded from Google. Apple Music tracks stop playing until it is downloaded again.
 widevine-prompt-title = Widevine module
 widevine-prompt-wanted = Apple Music tracks are encrypted and need Google's Widevine module. No browser on this computer has one. Sonora can download it from Google's servers, the same file Chrome installs, and keep it in its own folder.
+widevine-prompt-replace = Apple Music tracks are encrypted and need Google's Widevine module. A browser on this computer has one, and Sonora can download Google's own copy to use instead, the same file Chrome installs, kept in its own folder.
 widevine-prompt-downloading = Downloading…
 widevine-prompt-terms = Version { $version } is downloaded. Installing it means accepting Google's terms for the module:
 widevine-prompt-installing = Installing…
@@ -624,6 +657,10 @@ settings-fullscreen-lyrics-size-detail = Size of the lyrics text on the fullscre
 settings-lyrics-size-value = { $size }%
 settings-lyrics-for-local-files = Lyrics for local files
 settings-lyrics-for-local-files-detail = Use metadata from local files to fetch lyrics from the internet
+settings-artwork-for-local-files = Artwork for local files
+settings-artwork-for-local-files-detail = Use metadata from local files to find a cover on Deezer for your Discord status
+settings-prefer-local-lyrics = Prefer local lyrics
+settings-prefer-local-lyrics-detail = Use the lyrics stored in a local file's tags or its .lrc file instead of searching the other providers
 settings-karaoke-lyrics = Karaoke lyrics
 settings-karaoke-lyrics-detail = Highlight lyrics word by word when timing is available
 settings-blur-lyrics = Blur inactive lyrics
@@ -637,6 +674,7 @@ settings-lyrics-providers-selected = { $count ->
     [one] { $count } selected
    *[other] { $count } selected
     }
+settings-lyrics-provider-local = Local files
 settings-lyrics-provider-spotify = Spotify
 settings-lyrics-provider-youtube = YouTube Music
 settings-lyrics-provider-apple-music = Apple Music
@@ -657,6 +695,7 @@ settings-group-accounts = Accounts
 settings-group-library = Library
 settings-group-text = Text
 settings-group-motion = Motion
+settings-group-fullscreen = Fullscreen
 settings-group-title-bar = Title bar
 settings-group-window-style = Window style
 settings-group-lyrics = Lyrics
@@ -672,6 +711,7 @@ settings-provider-connected = Connected
 settings-provider-current = Playing from this service
 settings-provider-guest = Playing as a guest
 settings-provider-switch = Switch to
+settings-profile-account = { $provider } · { $account }
 settings-sign-out = Sign out
 settings-group-scrobbling = Scrobbling
 settings-lastfm = Last.fm
@@ -701,6 +741,9 @@ settings-choose-folder = Choose folder…
 settings-add-folder = Add folder
 settings-remove-folder = Remove folder
 settings-rescan = Rescan
+settings-scan-walking = Scanning…
+settings-scan-progress = { $percent }%
+settings-scan-done = Done in { $seconds }s
 settings-tab-about = About
 settings-version = Version
 settings-version-detail = The build of sonora you are running
@@ -727,6 +770,7 @@ theme-ocean = Ocean
 theme-rose = Rose
 theme-lavender = Lavender
 theme-amber = Amber
+theme-unavailable = { $name } (unavailable)
 
 # corners
 corners-square = Square
@@ -774,6 +818,9 @@ toast-queue-failed = That could not be added to the queue
 toast-keys-refused = Spotify is not granting this account playback keys
 toast-sign-in-to-play = { $name } only streams to a signed-in listener
 toast-track-unplayable = { $name } could not be played
+toast-playback-stopped = Playback stopped after several tracks in a row could not be played
+toast-throttled = { $name } is limiting playback for now. Trying again in a moment
+toast-still-throttled = { $name } is still limiting playback. Press play to try again
 toast-library-add-failed = { $name } could not be added to your library
 toast-library-remove-failed = { $name } could not be removed from your library
 toast-library-added = Added to your library
@@ -788,6 +835,7 @@ lyrics-instrumental = This song is instrumental
 lyrics-failed = Could not reach the lyrics service
 lyrics-follow = Follow the song again
 lyrics-source = Lyrics from { $source }
+lyrics-source-local = Lyrics from the local file
 lyrics-writers = Written by { $writers }
 
 update-available = Sonora { $version } is out
@@ -811,6 +859,9 @@ tags-sheet-album = Album
 tags-sheet-details = Details
 tags-title = Title
 tags-artist = Artist
+tags-artists = Artists
+tags-add-artist = Add an artist
+tags-remove-artist = Remove this artist
 tags-track = Track number
 tags-track-total = Tracks on release
 tags-disc = Disc number
@@ -833,3 +884,15 @@ nav-pins-alphabetical = Alphabetical
 nav-pins-kind = By type
 nav-show-full-library = Show full library
 nav-return-top = Back to top
+
+# trouble
+trouble-offline = No connection
+trouble-offline-detail = Check your internet connection and try again.
+trouble-not-loaded = Could not load
+trouble-retry = Try again
+toast-offline = No connection. Nothing will stream until it is back.
+toast-settings-broken = Fix line { $name } of settings.json to save changes
+toast-tray-unavailable = There is no system tray to put the icon in
+
+# power
+wake-reason = Music is playing

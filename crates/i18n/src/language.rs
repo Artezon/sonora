@@ -15,13 +15,15 @@ pub enum Language {
     Russian,
     Ukrainian,
     Polish,
+    Czech,
     PortugueseBrazilian,
     ChineseSimplified,
     Turkish,
+    Albanian,
 }
 
 impl Language {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 15] = [
         Self::English,
         Self::German,
         Self::Spanish,
@@ -32,9 +34,11 @@ impl Language {
         Self::Russian,
         Self::Ukrainian,
         Self::Polish,
+        Self::Czech,
         Self::PortugueseBrazilian,
         Self::ChineseSimplified,
         Self::Turkish,
+        Self::Albanian,
     ];
 
     pub fn id(self) -> &'static str {
@@ -49,9 +53,11 @@ impl Language {
             Self::Russian => "ru",
             Self::Ukrainian => "uk",
             Self::Polish => "pl",
+            Self::Czech => "cs",
             Self::PortugueseBrazilian => "pt-BR",
             Self::ChineseSimplified => "zh-CN",
             Self::Turkish => "tr",
+            Self::Albanian => "sq",
         }
     }
 
@@ -67,9 +73,11 @@ impl Language {
             Self::Russian => "Русский",
             Self::Ukrainian => "Українська",
             Self::Polish => "Polski",
+            Self::Czech => "Čeština",
             Self::PortugueseBrazilian => "Português (Brasil)",
             Self::ChineseSimplified => "简体中文",
             Self::Turkish => "Türkçe",
+            Self::Albanian => "Shqip",
         }
     }
 
@@ -101,9 +109,11 @@ impl Language {
             Self::Russian => langid!("ru"),
             Self::Ukrainian => langid!("uk"),
             Self::Polish => langid!("pl"),
+            Self::Czech => langid!("cs"),
             Self::PortugueseBrazilian => langid!("pt-BR"),
             Self::ChineseSimplified => langid!("zh-CN"),
             Self::Turkish => langid!("tr"),
+            Self::Albanian => langid!("sq"),
         }
     }
 
@@ -119,9 +129,11 @@ impl Language {
             Self::Russian => include_str!("../../../assets/i18n/ru/main.ftl"),
             Self::Ukrainian => include_str!("../../../assets/i18n/uk/main.ftl"),
             Self::Polish => include_str!("../../../assets/i18n/pl/main.ftl"),
+            Self::Czech => include_str!("../../../assets/i18n/cs/main.ftl"),
             Self::PortugueseBrazilian => include_str!("../../../assets/i18n/pt-BR/main.ftl"),
             Self::ChineseSimplified => include_str!("../../../assets/i18n/zh-CN/main.ftl"),
             Self::Turkish => include_str!("../../../assets/i18n/tr/main.ftl"),
+            Self::Albanian => include_str!("../../../assets/i18n/sq/main.ftl"),
         }
     }
 }

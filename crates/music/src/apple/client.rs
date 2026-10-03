@@ -11,34 +11,49 @@
 //! the catalog id, and the library id is looked up again on the rare write that needs it.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use futures::stream::{self, StreamExt as _, TryStreamExt as _};
 use serde_json::Value;
 
 use crate::apple::auth::{self, AGENT};
+use crate::apple::recommend;
 use crate::apple::wire;
+use crate::engine::Loudness;
 use crate::{
-    Album, AlbumDetail, Artist, ArtistProfile, Genre, GenreDetail, GenreItem, GenreSection,
-    HomeFeed, LibraryItem, LibraryOrder, MediaKind, MusicApi, Page, Pages, Playlist,
-    PlaylistDetail, SavedArtist, Track, UserProfile,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Genre, GenreDetail,
+    GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page, Pages, PinOutcome, PinTarget,
+    PinTargetKind, Playlist, PlaylistDetail, SavedArtist, Track, UserProfile, escape,
 };
 
 /// The API the web player calls.
 const API: &str = "https://amp-api.music.apple.com/v1";
+
+/// Where the web player posts its play-activity beacon. It is a different host from the amp-api
+/// gateway, and the one that makes a play count toward the account's recently played and play
+/// history across devices.
+const ACTIVITY: &str = "https://universal-activity-service.itunes.apple.com/play";
+
+/// The client build string the web player stamps on every play beacon. The activity service
+/// drops a beacon that does not look like an Apple Music client.
+const BEACON_BUILD: &str = "AppleMusic/1.0 Linux/0.0 model/Linux x86_64 build/2638.11.0-external";
+
+/// The user-agent the web player reports in the beacon body, alongside the build string.
+const BEACON_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:156.0) Gecko/20100101 Firefox/156.0";
+
+/// Container type 3 is an album: the surface a catalog play is reported from.
+const CONTAINER_ALBUM: u8 = 3;
 
 /// How many rows a library or track listing asks for at a time, which is Apple's maximum.
 const PAGE: usize = 100;
 
 /// How many search hits to ask for. Apple refuses a search page larger than this outright.
 const HITS: usize = 25;
-
-/// How many rows the mixed library landing takes, which is all Apple allows for that one.
-const LANDING: usize = 25;
 
 /// How many pages one listing will walk before it stops. A library of a hundred thousand songs
 /// is not something to pull into memory in one go.
@@ -70,6 +85,20 @@ const SONGS_QUERY: &[(&str, &str)] = &[
 ];
 const CATALOG_QUERY: &[(&str, &str)] = &[("include", "catalog")];
 
+/// The listener's pins with everything a sidebar row shows, as the web player asks for them.
+/// The resources come back as one map rather than inline, and a library artist's artwork only
+/// exists on the catalog artist behind it.
+const PINS: &str = "/me/library/pins";
+const PINS_QUERY: &[(&str, &str)] = &[
+    ("format[resources]", "map"),
+    ("include[library-albums]", "catalog"),
+    ("include[library-artists]", "catalog"),
+    ("fields[artists]", "artwork"),
+];
+
+/// How many pins Apple keeps, songs and videos included. It refuses the next one with a 400.
+const PIN_LIMIT: usize = 6;
+
 /// How long a fetched listing is kept for the next caller. Long enough for one library load,
 /// whose pages and favorites read the same listings within seconds of each other.
 const LISTING_TTL: Duration = Duration::from_secs(30);
@@ -81,6 +110,7 @@ const PORTRAITS: usize = 50;
 /// type and refuses a longer list outright: a hundred albums, but only twenty-five artists.
 const RATED_ALBUMS: usize = 100;
 const RATED_ARTISTS: usize = 25;
+const RATED_SONGS: usize = 100;
 
 /// What the listener is called on their own playlists, until Apple offers a name for them.
 const OWNER: &str = "You";
@@ -90,6 +120,23 @@ const STATION: usize = 10;
 
 /// How many of those requests make a queue worth having behind a track.
 const STATION_PULLS: usize = 3;
+
+/// How many times one read is sent before its failure belongs to the caller.
+///
+/// Apple's gateway sheds load while a library is being pulled: it answers 503, or takes the
+/// request and then cuts the body short of the length it announced. Neither says anything about
+/// the account or the request, and asking again a moment later lands. Only reads are repeated,
+/// since a write that broke on the way back may still have been applied.
+const TRIES: u32 = 3;
+
+/// How long to wait before sending a read again. Doubled after every attempt, and spread over
+/// that much again on top, so the pages of a listing that failed together do not all come back
+/// at the same instant.
+const RETRY_WAIT: Duration = Duration::from_millis(400);
+
+/// The longest a `Retry-After` is honoured for. Past this the wait costs more than the failure,
+/// and a shelf that fails keeps showing its last snapshot anyway.
+const RETRY_CAP: Duration = Duration::from_secs(5);
 
 /// An Apple Music account.
 #[derive(Clone)]
@@ -105,6 +152,16 @@ pub struct AppleClient {
     /// Listings fetched or being fetched, by path and query, so the library pages and the
     /// favorites drawn over them walk each listing once between them.
     listings: Arc<Mutex<HashMap<String, Listing>>>,
+    /// What the last pin list said, so an unpin needs no lookup and a pin past the limit is
+    /// not sent.
+    pinned: Arc<Mutex<Pinned>>,
+}
+
+/// What the catalog says about a song that playback wants before the decoder can tell.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Details {
+    pub duration: Option<Duration>,
+    pub loudness: Option<Loudness>,
 }
 
 /// Where a listing's pages go as they land, and how each row is read on the way: the channel
@@ -114,11 +171,47 @@ type Sink<'a, T> = (
     &'a (dyn Fn(&Value) -> Option<T> + Sync),
 );
 
+/// The last pin list as the client remembers it: the library id behind each pin Sonora shows,
+/// by uri, and how many pins Apple holds in all.
+#[derive(Default)]
+struct Pinned {
+    ids: HashMap<String, String>,
+    count: usize,
+}
+
 /// One listing fetched, or still being fetched, and when it was first asked for.
 struct Listing {
     at: Instant,
     rows: Arc<tokio::sync::OnceCell<Arc<Vec<Value>>>>,
 }
+
+/// A failure the gateway is answering for rather than the request: a connection that broke
+/// before the body was whole, or a status Apple gives while it is shedding load. It carries the
+/// wait Apple asked for, when it named one. Any other failure is the account's or the request's
+/// own, and sending it again would only collect the same refusal twice.
+#[derive(Debug)]
+struct Busy(Option<Duration>);
+
+impl fmt::Display for Busy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the apple music gateway is busy")
+    }
+}
+
+impl std::error::Error for Busy {}
+
+/// A 404 from Apple. It also means an empty relationship, such as the tracks of a playlist
+/// with nothing in it, so a caller that knows the parent exists reads it as no rows.
+#[derive(Debug)]
+struct Missing;
+
+impl fmt::Display for Missing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("apple music has nothing there")
+    }
+}
+
+impl std::error::Error for Missing {}
 
 impl AppleClient {
     /// Reads the web player's bearer token and the account's storefront, which is also what
@@ -136,6 +229,7 @@ impl AppleClient {
             storefront: "us".into(),
             station: Arc::default(),
             listings: Arc::default(),
+            pinned: Arc::default(),
         };
         let answered = client.get("/me/storefront", &[]).await?;
         let storefront = answered
@@ -162,18 +256,57 @@ impl AppleClient {
         &self.storefront
     }
 
-    fn catalog(&self, path: &str) -> String {
-        format!("/catalog/{}{path}", self.storefront)
+    pub(crate) fn catalog(&self, path: &str) -> String {
+        format!("/catalog/{}{path}", escape::component(&self.storefront))
     }
 
-    /// One request against the API. The account token rides on every one of them, and neither
-    /// token is ever logged.
+    /// One request against the API, sent again with a growing wait while the gateway is what
+    /// failed rather than the request.
+    ///
+    /// A read gets [`TRIES`] attempts. A write gets one: its answer may have been lost on the
+    /// way back after Apple had already applied it, and adding a playlist twice is worse than
+    /// reporting a failure once.
     async fn send(
         &self,
         method: reqwest::Method,
         path: &str,
         query: &[(&str, &str)],
         body: Option<Value>,
+    ) -> Result<Value> {
+        let tries = match method == reqwest::Method::GET {
+            true => TRIES,
+            false => 1,
+        };
+        let mut tried = 0;
+        loop {
+            let error = match self.send_once(&method, path, query, body.as_ref()).await {
+                Ok(answered) => return Ok(answered),
+                Err(error) => error,
+            };
+            let Some(Busy(after)) = error.downcast_ref::<Busy>() else {
+                return Err(error);
+            };
+            tried += 1;
+            if tried >= tries {
+                return Err(error);
+            }
+            let wait = after.unwrap_or_else(|| backoff(tried - 1));
+            log::debug!(
+                "apple: {method} {path} failed, asking again in {}ms: {error:#}",
+                wait.as_millis()
+            );
+            tokio::time::sleep(wait).await;
+        }
+    }
+
+    /// One round trip, with nothing repeated. The account token rides on every request, and
+    /// neither token is ever logged.
+    async fn send_once(
+        &self,
+        method: &reqwest::Method,
+        path: &str,
+        query: &[(&str, &str)],
+        body: Option<&Value>,
     ) -> Result<Value> {
         let mut request = self
             .http
@@ -187,26 +320,33 @@ impl AppleClient {
             .header(reqwest::header::REFERER, "https://music.apple.com/")
             .query(query);
         request = match body {
-            Some(body) => request.json(&body),
+            Some(body) => request.json(body),
             // Apple's gateway refuses a write with no length at all.
             None => request.header(reqwest::header::CONTENT_LENGTH, "0"),
         };
         let started = Instant::now();
-        let response = request
-            .send()
-            .await
-            .with_context(|| format!("cannot reach apple music at {path}"))?;
+        // Nothing was answered, so nothing was applied either: this one is always worth asking
+        // again, whatever the method.
+        let response = request.send().await.map_err(|error| {
+            anyhow::Error::new(error)
+                .context(format!("cannot reach apple music at {path}"))
+                .context(Busy(None))
+        })?;
 
         let status = response.status();
+        let after = retry_after(response.headers());
         // Every wait on a library load is a sum of these, so this is where a slow one shows.
         log::debug!(
             "apple: {method} {path} answered {status} in {} ms",
             started.elapsed().as_millis()
         );
-        let text = response
-            .text()
-            .await
-            .with_context(|| format!("cannot read the apple music answer for {path}"))?;
+        // A body cut short of the length it announced is the gateway giving up mid answer, not
+        // an answer with anything wrong in it.
+        let text = response.text().await.map_err(|error| {
+            anyhow::Error::new(error)
+                .context(format!("cannot read the apple music answer for {path}"))
+                .context(Busy(after))
+        })?;
         let answered: Value = match text.trim().is_empty() {
             true => Value::Null,
             false => serde_json::from_str(&text).unwrap_or(Value::Null),
@@ -222,12 +362,17 @@ impl AppleClient {
                 .or_else(|| answered.pointer("/errors/0/title"))
                 .and_then(Value::as_str)
                 .unwrap_or("no reason given");
-            bail!("apple music answered {status} for {method} {path}: {detail}");
+            let refused = anyhow!("apple music answered {status} for {method} {path}: {detail}");
+            return match (busy(status), status == reqwest::StatusCode::NOT_FOUND) {
+                (true, _) => Err(refused.context(Busy(after))),
+                (false, true) => Err(refused.context(Missing)),
+                (false, false) => Err(refused),
+            };
         }
         Ok(answered)
     }
 
-    async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
+    pub(crate) async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
         self.send(reqwest::Method::GET, path, query, None).await
     }
 
@@ -245,6 +390,54 @@ impl AppleClient {
         self.send(reqwest::Method::DELETE, path, query, None)
             .await
             .map(|_| ())
+    }
+
+    /// Posts a play-activity beacon to Apple's activity service, once. This is a different host
+    /// from the amp-api gateway, so it does not go through [`send`](Self::send). It carries the
+    /// same bearer and account token every other request does, and neither is ever logged.
+    async fn play_activity(&self, body: &Value) -> Result<()> {
+        let response = self
+            .http
+            .post(ACTIVITY)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.bearer),
+            )
+            .header("Music-User-Token", self.user_token.as_ref())
+            .header(reqwest::header::ORIGIN, "https://music.apple.com")
+            .header(reqwest::header::REFERER, "https://music.apple.com/")
+            .json(body)
+            .send()
+            .await
+            .context("cannot reach apple's play activity service")?;
+        let status = response.status();
+        if !status.is_success() {
+            let detail = response.text().await.unwrap_or_default();
+            bail!("apple play activity answered {status}: {detail}");
+        }
+        Ok(())
+    }
+
+    /// The account's live recently played shelf, newest first: the albums and playlists the
+    /// recent plays came from, read the way the web player's own shelf reads them.
+    async fn recent_items(&self) -> Result<Vec<GenreItem>> {
+        let answered = self.get("/me/recent/played", &[("limit", "10")]).await?;
+        Ok(answered
+            .get("data")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| match row.get("type").and_then(Value::as_str) {
+                        Some("albums") => wire::album(row).map(GenreItem::Album),
+                        Some("library-albums") => wire::library_album(row).map(GenreItem::Album),
+                        Some("playlists") | Some("library-playlists") => {
+                            wire::playlist(row).map(GenreItem::Playlist)
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     /// Walks a paged listing and reads every row with `read`. The rows come from
@@ -300,12 +493,30 @@ impl AppleClient {
         listings.retain(|_, listing| listing.at.elapsed() < LISTING_TTL);
         listings
             .entry(key)
-            .or_insert_with(|| Listing {
-                at: Instant::now(),
-                rows: Arc::default(),
+            .or_insert_with(|| {
+                self.expire();
+                Listing {
+                    at: Instant::now(),
+                    rows: Arc::default(),
+                }
             })
             .rows
             .clone()
+    }
+
+    /// Drops the listings that have outlived [`LISTING_TTL`] once it has passed, so the rows of
+    /// a startup load leave memory without waiting for the next listing to be asked for.
+    fn expire(&self) {
+        let listings = Arc::downgrade(&self.listings);
+        tokio::spawn(async move {
+            tokio::time::sleep(LISTING_TTL).await;
+            let Some(listings) = listings.upgrade() else {
+                return;
+            };
+            if let Ok(mut listings) = listings.lock() {
+                listings.retain(|_, listing| listing.at.elapsed() < LISTING_TTL);
+            }
+        });
     }
 
     /// A listing handed out a page at a time, read through `read`, on a channel that stays
@@ -384,19 +595,21 @@ impl AppleClient {
         asked.push(("limit", &limit));
         let started = Instant::now();
 
-        let first = self.get(path, &asked).await?;
-        let mut collected: Vec<Value> = rows(&first).to_vec();
-        let got = collected.len();
-        let mut spent = 1usize;
+        let mut first = self.get(path, &asked).await?;
         let total = first
             .pointer("/meta/total")
             .and_then(Value::as_u64)
             .and_then(|total| usize::try_from(total).ok());
+        let more = first.get("next").is_some();
+        let mut collected = take_rows(&mut first);
+        drop(first);
+        let got = collected.len();
+        let mut spent = 1usize;
         if let Some((sink, read)) = sink {
             let items = collected.iter().filter_map(read).collect();
             sink.send(Ok(Page { total, items })).await.ok();
         }
-        if got == page && first.get("next").is_some() {
+        if got == page && more {
             let left = total.map_or(PAGES - 1, |total| {
                 total.saturating_sub(got).div_ceil(page).min(PAGES - 1)
             });
@@ -411,15 +624,17 @@ impl AppleClient {
                     }
                 })
                 .buffered(FAN);
-            while let Some(answered) = answers.try_next().await? {
+            while let Some(mut answered) = answers.try_next().await? {
                 spent += 1;
-                let rows = rows(&answered);
-                let last = rows.len() < page || answered.get("next").is_none();
+                let more = answered.get("next").is_some();
+                let rows = take_rows(&mut answered);
+                drop(answered);
+                let last = rows.len() < page || !more;
                 if let Some((sink, read)) = sink {
                     let items = rows.iter().filter_map(read).collect();
                     sink.send(Ok(Page { total, items })).await.ok();
                 }
-                collected.extend_from_slice(rows);
+                collected.extend(rows);
                 if last {
                     break;
                 }
@@ -431,20 +646,6 @@ impl AppleClient {
             started.elapsed().as_millis()
         );
         Ok(collected)
-    }
-
-    /// The id of the Favorite Songs playlist, found by what it is rather than what it is
-    /// called. The tags that mark it are only sent when asked for.
-    async fn favorites_playlist(&self) -> Result<Option<String>> {
-        let found = self
-            .walk(
-                "/me/library/playlists",
-                PAGE,
-                &[("extend[library-playlists]", "tags")],
-                wire::favorites_playlist,
-            )
-            .await?;
-        Ok(found.into_iter().next())
     }
 
     /// Keeps the library resources of one kind the listener has favorited, out of `items`
@@ -508,23 +709,59 @@ impl AppleClient {
     /// The library id of a catalog resource, if the listener has it. Apple only answers this one
     /// way round, which is why removing something takes two requests.
     async fn mine(&self, kind: &str, id: &str) -> Result<Option<String>> {
-        let path = self.catalog(&format!("/{kind}/{id}/library"));
+        let path = self.catalog(&format!("/{kind}/{}/library", escape::component(id)));
         match self.get(&path, &[]).await {
             Ok(answered) => Ok(answered
                 .pointer("/data/0/id")
                 .and_then(Value::as_str)
                 .map(str::to_owned)),
             // Not in the library at all, which Apple reports as a missing relationship.
-            Err(error) if format!("{error}").contains("404") => Ok(None),
+            Err(error) if error.is::<Missing>() => Ok(None),
             Err(error) => Err(error),
         }
+    }
+
+    /// The pin list last read. The lock is never held across an await.
+    fn remembered(&self) -> std::sync::MutexGuard<'_, Pinned> {
+        self.pinned
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The library id of a catalog artist, if the listener has one. A catalog artist has no
+    /// `library` relationship, so the library is searched for the artist's name and the hit
+    /// whose catalog artist is this one is kept.
+    async fn library_artist(&self, id: &str) -> Result<Option<String>> {
+        let artist = self
+            .get(
+                &self.catalog(&format!("/artists/{}", escape::component(id))),
+                &[("fields[artists]", "name")],
+            )
+            .await?;
+        let name = artist
+            .pointer("/data/0/attributes/name")
+            .and_then(Value::as_str)
+            .with_context(|| format!("apple music has no artist {id}"))?;
+        let limit = HITS.to_string();
+        let found = self
+            .get(
+                "/me/library/search",
+                &[
+                    ("term", name),
+                    ("types", "library-artists"),
+                    ("include[library-artists]", "catalog"),
+                    ("limit", &limit),
+                ],
+            )
+            .await?;
+        Ok(wire::library_artist(&found, id))
     }
 
     /// A catalog song, with its artists and album so both are somewhere to go.
     async fn song(&self, id: &str) -> Result<Value> {
         let answered = self
             .get(
-                &self.catalog(&format!("/songs/{id}")),
+                &self.catalog(&format!("/songs/{}", escape::component(id))),
                 &[("include[songs]", "artists,albums")],
             )
             .await?;
@@ -532,6 +769,52 @@ impl AppleClient {
             .pointer("/data/0")
             .cloned()
             .with_context(|| format!("apple music has no song {id}"))
+    }
+
+    /// The catalog's length and loudness for a song, from one lookup that asks for nothing
+    /// else. Either is missing when the catalog does not say, and a failed lookup leaves both
+    /// missing.
+    ///
+    /// The loudness is the catalog's own audio analysis: integrated LUFS and a true peak in
+    /// dBFS. The same figures sit in the `ludt` box of Apple's enhanced HLS encodes, but the
+    /// Widevine encode this path plays carries no `udta` at all.
+    pub async fn playback_details(&self, id: &str) -> Details {
+        let answered = self
+            .get(
+                &self.catalog(&format!("/songs/{}", escape::component(id))),
+                &[
+                    ("include[songs]", "audio-analysis"),
+                    ("fields[songs]", "durationInMillis"),
+                    ("omit[resource]", "autos"),
+                ],
+            )
+            .await;
+        let song = match answered {
+            Ok(answered) => answered.pointer("/data/0").cloned().unwrap_or_default(),
+            Err(error) => {
+                log::debug!("apple: cannot read the details of {id}: {error:#}");
+                return Details::default();
+            }
+        };
+        let duration = song
+            .pointer("/attributes/durationInMillis")
+            .and_then(Value::as_u64)
+            .filter(|millis| *millis > 0)
+            .map(Duration::from_millis);
+        let main = song.pointer("/relationships/audio-analysis/data/0/attributes/loudness/main");
+        let lufs = main
+            .and_then(|main| main.get("value"))
+            .and_then(Value::as_f64)
+            .filter(|lufs| (-70.0..0.0).contains(lufs));
+        let peak = main
+            .and_then(|main| main.get("peak"))
+            .and_then(Value::as_f64)
+            .map(|dbfs| 10f64.powf(dbfs / 20.0) as f32);
+        let loudness = lufs.map(|lufs| Loudness {
+            lufs: lufs as f32,
+            peak,
+        });
+        Details { duration, loudness }
     }
 
     /// The tracks of a playlist, from the first page or from a continuation, with the
@@ -547,7 +830,11 @@ impl AppleClient {
                     ("include[library-songs]", "catalog"),
                 ],
             )
-            .await?;
+            .await;
+        let answered = match answered {
+            Err(error) if error.is::<Missing>() => return Ok((Vec::new(), None, Some(0))),
+            answered => answered?,
+        };
         let tracks = answered
             .get("data")
             .and_then(Value::as_array)
@@ -564,8 +851,27 @@ impl AppleClient {
         Ok((tracks, next, total))
     }
 
+    /// The catalog id of an artist, looked up through the library when `artist_id` is a
+    /// library id. Fails for a library artist the catalog has no page for.
+    pub(crate) async fn catalog_artist(&self, artist_id: &str) -> Result<String> {
+        if !Self::is_mine(artist_id) {
+            return Ok(artist_id.to_owned());
+        }
+        self.get(
+            &format!("/me/library/artists/{}", escape::component(artist_id)),
+            &[("include", "catalog")],
+        )
+        .await?
+        .pointer("/data/0")
+        .and_then(wire::catalog)
+        .and_then(|found| found.get("id"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .context("this library artist has no page in the catalog")
+    }
+
     /// Whether an id belongs to the listener's own library rather than the catalog.
-    fn is_mine(id: &str) -> bool {
+    pub(crate) fn is_mine(id: &str) -> bool {
         let mut letters = id.chars();
         matches!(letters.next(), Some('i' | 'l' | 'r' | 'p')) && letters.next() == Some('.')
     }
@@ -610,7 +916,7 @@ impl AppleClient {
         let limit = STATION.to_string();
         let answered = self
             .post(
-                &format!("/me/stations/next-tracks/{station}"),
+                &format!("/me/stations/next-tracks/{}", escape::component(station)),
                 &[("limit", &limit), ("include[songs]", "artists,albums")],
                 None,
             )
@@ -698,16 +1004,33 @@ impl MusicApi for AppleClient {
         match Self::is_mine(id) {
             true => None,
             false => Some(format!(
-                "https://music.apple.com/{}/{part}/{id}",
-                self.storefront
+                "https://music.apple.com/{}/{part}/{}",
+                escape::component(&self.storefront),
+                escape::component(id)
             )),
         }
     }
 
+    /// The account, named and pictured from the listener's Apple Music profile when they have
+    /// one; otherwise the service name with no picture. A missing profile never fails sign-in.
     async fn profile(&self) -> Result<UserProfile> {
+        let social = match self.get("/me/social-profile", &[]).await {
+            Ok(answered) => answered,
+            // No social profile on the account: the service name and no picture still sign in.
+            Err(error) => {
+                log::debug!("apple: no social profile for this account: {error:#}");
+                Value::Null
+            }
+        };
+        let attributes = social.pointer("/data/0/attributes");
+        let display_name = attributes
+            .and_then(|attributes| wire::text(attributes, "name"))
+            .unwrap_or_else(|| "Apple Music".to_owned());
+        let avatar = attributes.and_then(|attributes| wire::artwork(attributes, wire::ART));
         Ok(UserProfile {
             id: self.storefront.to_string(),
-            display_name: "Apple Music".to_owned(),
+            display_name,
+            avatar,
         })
     }
 
@@ -770,6 +1093,107 @@ impl MusicApi for AppleClient {
         Ok(None)
     }
 
+    /// Reports a play to Apple's play-activity service, so the track reaches the account's
+    /// recently played on every device. It mirrors the web player's `JSPLAY` PLAY_START event;
+    /// only a catalog id counts, and a failure is logged and dropped, never breaking playback.
+    ///
+    /// The field shape is read off music.apple.com's MusicKit rather than documented: the
+    /// service silently drops a beacon missing the tokens and client identity it expects.
+    async fn report_play(&self, track_id: &str) -> Result<()> {
+        if Self::is_mine(track_id) {
+            return Ok(());
+        }
+        // Only a numeric catalog id names anything the catalog history keeps.
+        if track_id.parse::<u64>().is_err() {
+            return Ok(());
+        }
+        // Duration and album container come from one catalog lookup; a failed lookup still sends.
+        let song = self
+            .get(
+                &self.catalog(&format!("/songs/{}", escape::component(track_id))),
+                &[
+                    ("include[songs]", "albums"),
+                    ("fields[songs]", "durationInMillis"),
+                    ("fields[albums]", "url"),
+                ],
+            )
+            .await
+            .ok();
+        let data = song
+            .as_ref()
+            .and_then(|answered| answered.pointer("/data/0"));
+        let duration = data
+            .and_then(|song| song.pointer("/attributes/durationInMillis"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let album = data
+            .and_then(|song| song.pointer("/relationships/albums/data/0/id"))
+            .and_then(Value::as_str);
+        // MusicKit mints a persistent id per play; a random 64-bit hex stands in the same way.
+        let persistent = format!("{:016x}", fastrand::u64(..));
+        let mut item = serde_json::json!({
+            "build-version": BEACON_BUILD,
+            "developer-token": self.bearer.as_ref(),
+            // PLAY_START is event type 1 in the web player's enum; the beacon that lands the play.
+            "event-type": 1,
+            "event-reason-hint-type": 1,
+            "type": 1,
+            // A subscription stream reports its catalog id under `subscription-adam-id`.
+            "ids": { "subscription-adam-id": track_id },
+            "internal-build": false,
+            "media-type": 0,
+            "media-duration-in-milliseconds": duration,
+            "milliseconds-since-play": 1,
+            "offline": false,
+            "persistent-id": persistent,
+            "play-mode": {
+                "auto-play-mode": 1,
+                "repeat-play-mode": 1,
+                "shuffle-play-mode": 1,
+            },
+            "private-enabled": false,
+            "sb-enabled": true,
+            "siri-initiated": false,
+            "source-type": 16,
+            "start-position-in-milliseconds": 0,
+            "store-front": self.storefront.as_ref(),
+            "user-agent": BEACON_AGENT,
+            "user-token": self.user_token.as_ref(),
+            "utc-offset-in-seconds": 0,
+        });
+        // The album container is set only when the lookup gave one.
+        if let Some(album) = album {
+            item["container-type"] = serde_json::json!(CONTAINER_ALBUM);
+            item["container-ids"] = serde_json::json!({ "album-adam-id": album });
+        }
+        let body = serde_json::json!({
+            "client_id": "JSCLIENT",
+            "event_type": "JSPLAY",
+            "data": [item],
+        });
+        self.play_activity(&body).await
+    }
+
+    /// The account's recently played songs across every device, newest first. Only songs are
+    /// kept; stations and music videos the list can also carry are dropped.
+    async fn recently_played(&self) -> Result<Vec<Track>> {
+        let answered = self
+            .get(
+                "/me/recent/played/tracks",
+                &[
+                    ("limit", "30"),
+                    ("include[songs]", "artists,albums"),
+                    ("types", "songs"),
+                ],
+            )
+            .await?;
+        Ok(answered
+            .pointer("/data")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(wire::song).collect())
+            .unwrap_or_default())
+    }
+
     /// The songs the listener has added. Only the ones with a catalog id are listed: an upload
     /// has no catalog encode behind it, and this path plays catalog tracks.
     async fn all_tracks(&self) -> Result<Vec<Track>> {
@@ -801,14 +1225,16 @@ impl MusicApi for AppleClient {
         Ok(self.paged(ARTISTS, PAGE, CATALOG_QUERY, wire::saved_artist))
     }
 
-    /// The favorite songs, which Apple keeps as a playlist of its own in the library. Nothing
-    /// when the account has no such playlist yet, which is what an account that has never
-    /// favorited a song looks like.
+    /// The favorite songs: the library songs the listener has rated, read the same way as the
+    /// albums and artists. The rating is the source of truth, not the Favorite Songs playlist,
+    /// which only exists while the account adds favorites to its library.
     async fn saved_tracks(&self) -> Result<Vec<Track>> {
-        match self.favorites_playlist().await? {
-            Some(playlist) => self.playlist_tracks(&playlist).await,
-            None => Ok(Vec::new()),
-        }
+        let songs = self
+            .walk(SONGS, PAGE, SONGS_QUERY, |row| {
+                Some((library_id(row)?, wire::library_song(row)?))
+            })
+            .await?;
+        self.rated("songs", RATED_SONGS, songs).await
     }
 
     /// The favorite albums: the library albums the listener has rated, since a favorite is a
@@ -833,33 +1259,80 @@ impl MusicApi for AppleClient {
         self.rated("artists", RATED_ARTISTS, artists).await
     }
 
-    /// The tags are asked for so this and [`favorites_playlist`](Self::favorites_playlist)
-    /// read one listing between them.
     async fn playlists(&self) -> Result<Vec<Playlist>> {
-        self.walk(
-            "/me/library/playlists",
-            PAGE,
-            &[("extend[library-playlists]", "tags")],
-            |row| wire::library_playlist(row, OWNER),
-        )
+        self.walk("/me/library/playlists", PAGE, &[], |row| {
+            wire::library_playlist(row, OWNER)
+        })
         .await
     }
 
-    /// The mixed library landing, newest first. Apple only orders it one way, so the other
-    /// orders are left to the separate collections.
-    async fn library_items(&self, order: LibraryOrder) -> Result<Option<Vec<LibraryItem>>> {
-        if !matches!(order, LibraryOrder::Recents | LibraryOrder::RecentlyAdded) {
-            return Ok(None);
+    /// The listener's pins in pin order, all of them pinned. The rest of the library is left
+    /// out, and `pin_uri` names anything else that can be pinned.
+    async fn pin_targets(&self) -> Result<Option<Vec<PinTarget>>> {
+        let limit = PAGE.to_string();
+        let mut query = PINS_QUERY.to_vec();
+        query.push(("limit", &limit));
+        let answered = self.get(PINS, &query).await?;
+        let pins = wire::pins(&answered, OWNER);
+        *self.remembered() = Pinned {
+            ids: pins
+                .iter()
+                .map(|(id, target)| (target.uri.clone(), id.clone()))
+                .collect(),
+            count: answered
+                .get("data")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len),
+        };
+        Ok(Some(pins.into_iter().map(|(_, target)| target).collect()))
+    }
+
+    /// Pins or unpins through Apple's own pins, which only hold what is in the library. A pin
+    /// already listed reuses its library id, and a catalog id is resolved to one. Anything not
+    /// in the library comes back as `Outside`, and a pin past Apple's limit as `LimitReached`.
+    async fn set_pinned(&self, uri: &str, pinned: bool) -> Result<PinOutcome> {
+        let (_, rest) = uri
+            .split_once(':')
+            .context("cannot pin an item without a provider")?;
+        let (kind, id) = rest
+            .split_once(':')
+            .context("cannot pin an item without a kind")?;
+        let kind = match kind {
+            "playlist" => "playlists",
+            "album" => "albums",
+            "artist" => "artists",
+            _ => bail!("that kind of item cannot be pinned"),
+        };
+        if pinned && self.remembered().count >= PIN_LIMIT {
+            return Ok(PinOutcome::LimitReached);
         }
-        let items = self
-            .walk(
-                "/me/library/recently-added",
-                LANDING,
-                &[("include", "catalog")],
-                |row| wire::library_item(row, OWNER),
-            )
-            .await?;
-        Ok(Some(items))
+        let listed = self.remembered().ids.get(uri).cloned();
+        let item = match (listed, Self::is_mine(id), kind) {
+            (Some(item), _, _) => Some(item),
+            (None, true, _) => Some(id.to_owned()),
+            (None, false, "artists") => self.library_artist(id).await?,
+            (None, false, _) => self.mine(kind, id).await?,
+        };
+        let Some(item) = item else {
+            return Ok(PinOutcome::Outside);
+        };
+        let path = format!("{PINS}/{item}");
+        if !pinned {
+            return self.delete(&path, &[]).await.map(|_| PinOutcome::Updated);
+        }
+        match self.post(&path, &[], None).await {
+            Ok(_) => Ok(PinOutcome::Updated),
+            // A pin made elsewhere since the last look can fill the list, so a refusal is
+            // measured against a fresh one.
+            Err(error) => match self.pin_targets().await {
+                Ok(_) if self.remembered().count >= PIN_LIMIT => Ok(PinOutcome::LimitReached),
+                _ => Err(error),
+            },
+        }
+    }
+
+    fn pin_uri(&self, kind: PinTargetKind, id: &str) -> Option<String> {
+        wire::pin_uri(kind, id)
     }
 
     async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
@@ -894,8 +1367,11 @@ impl MusicApi for AppleClient {
             }
             false => match self.mine(kind, id).await? {
                 Some(mine) => {
-                    self.delete(&format!("/me/library/{kind}/{mine}"), &[])
-                        .await
+                    self.delete(
+                        &format!("/me/library/{kind}/{}", escape::component(&mine)),
+                        &[],
+                    )
+                    .await
                 }
                 None => Ok(()),
             },
@@ -905,11 +1381,11 @@ impl MusicApi for AppleClient {
     async fn album(&self, album_id: &str) -> Result<AlbumDetail> {
         let (path, query): (String, Vec<(&str, &str)>) = match Self::is_mine(album_id) {
             true => (
-                format!("/me/library/albums/{album_id}"),
+                format!("/me/library/albums/{}", escape::component(album_id)),
                 vec![("include", "tracks,catalog")],
             ),
             false => (
-                self.catalog(&format!("/albums/{album_id}")),
+                self.catalog(&format!("/albums/{}", escape::component(album_id))),
                 vec![
                     ("include", "tracks,artists"),
                     ("include[songs]", "artists,albums"),
@@ -947,28 +1423,23 @@ impl MusicApi for AppleClient {
         Ok(self.album(album_id).await?.tracks)
     }
 
+    async fn album_catalogue(
+        &self,
+        album_id: &str,
+        artist_id: Option<&str>,
+    ) -> Result<AlbumCatalogue> {
+        recommend::album_catalogue(self, album_id, artist_id).await
+    }
+
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
-        let id = match Self::is_mine(artist_id) {
-            true => self
-                .get(
-                    &format!("/me/library/artists/{artist_id}"),
-                    &[("include", "catalog")],
-                )
-                .await?
-                .pointer("/data/0")
-                .and_then(wire::catalog)
-                .and_then(|found| found.get("id"))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .context("this library artist has no page in the catalog")?,
-            false => artist_id.to_owned(),
-        };
+        let id = self.catalog_artist(artist_id).await?;
         let answered = self
             .get(
-                &self.catalog(&format!("/artists/{id}")),
+                &self.catalog(&format!("/artists/{}", escape::component(&id))),
                 &[
                     ("views", "top-songs,full-albums,singles"),
                     ("include[songs]", "artists,albums"),
+                    ("extend", "artistBio"),
                 ],
             )
             .await?;
@@ -978,9 +1449,16 @@ impl MusicApi for AppleClient {
             .with_context(|| format!("cannot read the apple artist {id}"))
     }
 
+    async fn artist_catalogue(&self, artist_id: &str, _known: &[Track]) -> Result<ArtistCatalogue> {
+        recommend::artist_catalogue(self, artist_id).await
+    }
+
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
         let answered = self
-            .get(&self.catalog(&format!("/artists/{artist_id}")), &[])
+            .get(
+                &self.catalog(&format!("/artists/{}", escape::component(artist_id))),
+                &[("extend", "artistBio")],
+            )
             .await?;
         answered
             .pointer("/data/0")
@@ -1028,8 +1506,8 @@ impl MusicApi for AppleClient {
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
         let mine = Self::is_mine(playlist_id);
         let path = match mine {
-            true => format!("/me/library/playlists/{playlist_id}"),
-            false => self.catalog(&format!("/playlists/{playlist_id}")),
+            true => format!("/me/library/playlists/{}", escape::component(playlist_id)),
+            false => self.catalog(&format!("/playlists/{}", escape::component(playlist_id))),
         };
         let answered = self.get(&path, &[]).await?;
         let found = answered
@@ -1055,21 +1533,35 @@ impl MusicApi for AppleClient {
 
     /// Every track of a playlist, paged the same way as a library listing rather than one
     /// `next` link at a time: a long playlist is hundreds of rows, and each page is a wait.
+    /// The rows skip the listing memo, since startup reads every playlist at once and only the
+    /// tracks read from them are used.
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
         let path = match Self::is_mine(playlist_id) {
-            true => format!("/me/library/playlists/{playlist_id}/tracks"),
-            false => self.catalog(&format!("/playlists/{playlist_id}/tracks")),
+            true => format!(
+                "/me/library/playlists/{}/tracks",
+                escape::component(playlist_id)
+            ),
+            false => self.catalog(&format!(
+                "/playlists/{}/tracks",
+                escape::component(playlist_id)
+            )),
         };
-        self.walk(
-            &path,
-            PAGE,
-            &[
-                ("include[songs]", "artists,albums"),
-                ("include[library-songs]", "catalog"),
-            ],
-            wire::playlist_track,
-        )
-        .await
+        let walked = self
+            .pages::<Track>(
+                &path,
+                PAGE,
+                &[
+                    ("include[songs]", "artists,albums"),
+                    ("include[library-songs]", "catalog"),
+                ],
+                None,
+            )
+            .await
+            .map(|rows| rows.iter().filter_map(wire::playlist_track).collect());
+        match walked {
+            Err(error) if error.is::<Missing>() => Ok(Vec::new()),
+            walked => walked,
+        }
     }
 
     /// One more page of a playlist. The continuation is the link Apple handed back.
@@ -1083,8 +1575,14 @@ impl MusicApi for AppleClient {
 
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>> {
         let path = match Self::is_mine(playlist_id) {
-            true => format!("/me/library/playlists/{playlist_id}/tracks"),
-            false => self.catalog(&format!("/playlists/{playlist_id}/tracks")),
+            true => format!(
+                "/me/library/playlists/{}/tracks",
+                escape::component(playlist_id)
+            ),
+            false => self.catalog(&format!(
+                "/playlists/{}/tracks",
+                escape::component(playlist_id)
+            )),
         };
         let (tracks, _, _) = self.playlist_page(&path).await?;
         Ok(crate::distinct_covers(&tracks, wanted))
@@ -1107,20 +1605,23 @@ impl MusicApi for AppleClient {
 
     async fn rename_playlist(&self, playlist_id: &str, name: &str) -> Result<()> {
         self.patch(
-            &format!("/me/library/playlists/{playlist_id}"),
+            &format!("/me/library/playlists/{}", escape::component(playlist_id)),
             serde_json::json!({ "attributes": { "name": name } }),
         )
         .await
     }
 
     async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
-        self.delete(&format!("/me/library/playlists/{playlist_id}"), &[])
-            .await
+        self.delete(
+            &format!("/me/library/playlists/{}", escape::component(playlist_id)),
+            &[],
+        )
+        .await
     }
 
     async fn set_playlist_public(&self, playlist_id: &str, public: bool) -> Result<()> {
         self.patch(
-            &format!("/me/library/playlists/{playlist_id}"),
+            &format!("/me/library/playlists/{}", escape::component(playlist_id)),
             serde_json::json!({ "attributes": { "isPublic": public } }),
         )
         .await
@@ -1139,8 +1640,11 @@ impl MusicApi for AppleClient {
         };
         match id {
             Some(id) => {
-                self.delete(&format!("/me/library/playlists/{id}"), &[])
-                    .await
+                self.delete(
+                    &format!("/me/library/playlists/{}", escape::component(&id)),
+                    &[],
+                )
+                .await
             }
             None => Ok(()),
         }
@@ -1148,7 +1652,10 @@ impl MusicApi for AppleClient {
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
         self.post(
-            &format!("/me/library/playlists/{playlist_id}/tracks"),
+            &format!(
+                "/me/library/playlists/{}/tracks",
+                escape::component(playlist_id)
+            ),
             &[],
             Some(serde_json::json!({
                 "data": [{ "id": track_id, "type": "songs" }]
@@ -1167,7 +1674,10 @@ impl MusicApi for AppleClient {
             let offset = (page * PAGE).to_string();
             let answered = self
                 .get(
-                    &format!("/me/library/playlists/{playlist_id}/tracks"),
+                    &format!(
+                        "/me/library/playlists/{}/tracks",
+                        escape::component(playlist_id)
+                    ),
                     &[("limit", &limit), ("offset", &offset)],
                 )
                 .await?;
@@ -1194,7 +1704,10 @@ impl MusicApi for AppleClient {
             bail!("that track is not in the playlist any more");
         };
         self.delete(
-            &format!("/me/library/playlists/{playlist_id}/tracks"),
+            &format!(
+                "/me/library/playlists/{}/tracks",
+                escape::component(playlist_id)
+            ),
             &[("ids[library-songs]", &row), ("mode", "all")],
         )
         .await
@@ -1205,6 +1718,7 @@ impl MusicApi for AppleClient {
     async fn home(&self) -> Result<HomeFeed> {
         let answered = self.get("/me/recommendations", &[("limit", "12")]).await?;
         let mut sections = Vec::new();
+        let mut recents = Vec::new();
         for group in answered
             .get("data")
             .and_then(Value::as_array)
@@ -1229,17 +1743,38 @@ impl MusicApi for AppleClient {
                         .collect()
                 })
                 .unwrap_or_default();
-            if !items.is_empty() {
-                sections.push(GenreSection { title, items });
+            match is_recents(group) {
+                true => recents = items,
+                false if !items.is_empty() => sections.push(GenreSection { title, items }),
+                false => {}
             }
         }
         if sections.is_empty() {
             sections = self.charts(None).await.unwrap_or_default();
         }
+        // Apple's own recently played group is a cached ranking that lags real plays, so the live
+        // list leads Quick picks and the group only stands in when that list cannot be read.
+        let (containers, songs) = futures::join!(
+            self.recent_items(),
+            <Self as MusicApi>::recently_played(self)
+        );
+        let containers = match containers {
+            Ok(live) if !live.is_empty() => live,
+            Ok(_) => recents,
+            Err(error) => {
+                log::warn!("apple: cannot load recently played: {error:#}");
+                recents
+            }
+        };
+        let songs = songs.unwrap_or_else(|error| {
+            log::warn!("apple: cannot load recently played songs: {error:#}");
+            Vec::new()
+        });
+        let listen_again = recent_mix(containers, songs);
         Ok(HomeFeed {
-            listen_again: Vec::new(),
-            quick_picks: None,
+            listen_again,
             sections,
+            ..HomeFeed::default()
         })
     }
 
@@ -1262,7 +1797,10 @@ impl MusicApi for AppleClient {
 
     async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
         let answered = self
-            .get(&self.catalog(&format!("/genres/{genre_id}")), &[])
+            .get(
+                &self.catalog(&format!("/genres/{}", escape::component(genre_id))),
+                &[],
+            )
             .await?;
         let name = answered
             .pointer("/data/0/attributes/name")
@@ -1281,7 +1819,11 @@ impl MusicApi for AppleClient {
     /// rather than starting another, so a queue that keeps being extended stays one station.
     /// Apple hands out ten tracks a time, and repeats are dropped because a station is free to
     /// come back to a song this queue already holds.
-    async fn track_radio(&self, track_id: &str) -> Result<Vec<Track>> {
+    async fn track_radio(
+        &self,
+        track_id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
         let mut tracks = Vec::new();
         let station = match self.playing_station(track_id) {
             Some(station) => station,
@@ -1309,8 +1851,34 @@ impl MusicApi for AppleClient {
             None => false,
         });
         log::debug!("apple: station {station} gave {} tracks", tracks.len());
-        Ok(tracks)
+        Ok((tracks, None))
     }
+}
+
+/// Whether a status is Apple holding the request off rather than refusing it. A 5xx from the
+/// gateway and a 429 both clear on their own; every 4xx below that is about the request.
+fn busy(status: reqwest::StatusCode) -> bool {
+    status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
+/// The wait Apple asked for, when it named one in seconds and it is short enough to sit through.
+/// The HTTP-date form of the header is not read: Apple sends seconds, and a date is only ever a
+/// longer wait than [`RETRY_CAP`] would allow anyway.
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let asked = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    let seconds = asked.trim().parse::<u64>().ok()?;
+    Some(Duration::from_secs(seconds).min(RETRY_CAP))
+}
+
+/// How long to wait after `tried` attempts: the base doubled once per attempt, and up to that
+/// much again on top. The spread comes off the wall clock's nanoseconds, which is enough to keep
+/// the pages of one listing from failing and returning in lockstep.
+fn backoff(tried: u32) -> Duration {
+    let base = RETRY_WAIT * 2u32.pow(tried);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.subsec_nanos());
+    base + base.mul_f32(nanos as f32 / 1e9)
 }
 
 /// The id of a library row, which is the library's own rather than the catalog's.
@@ -1325,6 +1893,65 @@ fn rows(answered: &Value) -> &[Value] {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default()
+}
+
+/// Moves the `data` array out of an answer, so its rows are kept without a copy.
+fn take_rows(answered: &mut Value) -> Vec<Value> {
+    match answered.get_mut("data").map(Value::take) {
+        Some(Value::Array(rows)) => rows,
+        _ => Vec::new(),
+    }
+}
+
+/// The recently played part of Quick picks: the albums and playlists recent plays came from in
+/// Apple's order, then the recent songs no album there covers. An album only one of those songs
+/// came from stands as that song, since a lone song from it is a song play rather than an
+/// album play.
+fn recent_mix(containers: Vec<GenreItem>, songs: Vec<Track>) -> Vec<GenreItem> {
+    let played = |album: &str| {
+        songs
+            .iter()
+            .filter(|song| song.album_id.as_deref() == Some(album))
+            .count()
+    };
+    let mut mixed: Vec<GenreItem> = containers
+        .into_iter()
+        .map(|item| match &item {
+            GenreItem::Album(album) if played(&album.id) == 1 => songs
+                .iter()
+                .find(|song| song.album_id.as_deref() == Some(album.id.as_str()))
+                .map(|song| GenreItem::Track(song.clone()))
+                .unwrap_or(item),
+            _ => item,
+        })
+        .collect();
+    let covered: HashSet<String> = mixed
+        .iter()
+        .filter_map(|item| match item {
+            GenreItem::Album(album) => Some(album.id.clone()),
+            GenreItem::Track(track) => track.album_id.clone(),
+            _ => None,
+        })
+        .collect();
+    let mut seen = HashSet::new();
+    mixed.extend(
+        songs
+            .into_iter()
+            .filter(|song| {
+                song.album_id
+                    .as_ref()
+                    .is_none_or(|album| !covered.contains(album))
+            })
+            .filter(|song| song.id.clone().is_some_and(|id| seen.insert(id)))
+            .map(GenreItem::Track),
+    );
+    mixed
+}
+
+/// Whether a recommendation group is the account's recently played one, which Quick picks
+/// replace. Its title is in the storefront's language, so only its kind is checked.
+fn is_recents(group: &Value) -> bool {
+    group.pointer("/attributes/kind").and_then(Value::as_str) == Some("recently-played")
 }
 
 #[cfg(test)]

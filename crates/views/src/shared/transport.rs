@@ -4,6 +4,8 @@ use i18n::t;
 use state::{Playback, Queue, Repeat, Sonora};
 use ui::{ActiveTheme as _, Button};
 
+use crate::shared::ambient;
+
 pub(crate) const NOTCH: f32 = 0.05;
 const STEP: f32 = 0.004;
 
@@ -50,24 +52,29 @@ pub(crate) fn like(track: Option<music::Track>, cx: &App) -> Button {
         })
 }
 
+/// `big` is only true in fullscreen, where these buttons float over the ambient
+/// background and so blur their hover fills. Without that background, and on
+/// the flat player bar, the blur would show nothing.
 pub(crate) fn transport(
     playback: &Entity<Playback>,
     queue: &Entity<Queue>,
     big: bool,
     cx: &App,
 ) -> impl IntoElement {
+    let frosted = big && ambient::shown(cx);
+
     div()
         .flex()
         .items_center()
         .gap_2()
-        .child(shuffle(queue, cx))
-        .child(previous(playback, cx))
-        .child(toggle(playback, big, cx))
-        .child(next(playback, queue, cx))
-        .child(repeat(playback, cx))
+        .child(shuffle(queue, frosted, cx))
+        .child(previous(playback, frosted, cx))
+        .child(toggle(playback, big, frosted, cx))
+        .child(next(playback, queue, frosted, cx))
+        .child(repeat(playback, frosted, cx))
 }
 
-pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, cx: &App) -> Button {
+pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, frosted: bool, cx: &App) -> Button {
     let held = playback.read(cx);
     let playing = held.wants_playing();
     let idle = held.track().is_none();
@@ -80,6 +87,7 @@ pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, cx: &App) -> Button
 
     Button::new(id)
         .ghost()
+        .when(frosted, Button::frosted)
         .when(!big, Button::small)
         .icon(icon)
         .tooltip_above(tooltip)
@@ -89,13 +97,14 @@ pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, cx: &App) -> Button
         })
 }
 
-fn shuffle(queue: &Entity<Queue>, cx: &App) -> Button {
+fn shuffle(queue: &Entity<Queue>, frosted: bool, cx: &App) -> Button {
     let theme = *cx.theme();
     let on = queue.read(cx).shuffle();
     let queue = queue.clone();
 
     Button::new("shuffle")
         .ghost()
+        .when(frosted, Button::frosted)
         .small()
         .icon("icons/shuffle.svg")
         .tooltip_above("player-shuffle")
@@ -108,13 +117,14 @@ fn shuffle(queue: &Entity<Queue>, cx: &App) -> Button {
         })
 }
 
-fn repeat(playback: &Entity<Playback>, cx: &App) -> Button {
+fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
     let theme = *cx.theme();
     let repeat = playback.read(cx).repeat();
     let playback = playback.clone();
 
     Button::new("repeat")
         .ghost()
+        .when(frosted, Button::frosted)
         .small()
         .icon(match repeat {
             Repeat::One => "icons/repeat-one.svg",
@@ -134,12 +144,13 @@ fn repeat(playback: &Entity<Playback>, cx: &App) -> Button {
         })
 }
 
-fn previous(playback: &Entity<Playback>, cx: &App) -> Button {
+fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
     let enabled = playback.read(cx).has_previous(cx);
     let playback = playback.clone();
 
     Button::new("previous")
         .ghost()
+        .when(frosted, Button::frosted)
         .small()
         .icon("icons/skip-back.svg")
         .tooltip_above("player-previous")
@@ -149,12 +160,13 @@ fn previous(playback: &Entity<Playback>, cx: &App) -> Button {
         })
 }
 
-fn next(playback: &Entity<Playback>, queue: &Entity<Queue>, cx: &App) -> Button {
+fn next(playback: &Entity<Playback>, queue: &Entity<Queue>, frosted: bool, cx: &App) -> Button {
     let enabled = queue.read(cx).has_next();
     let playback = playback.clone();
 
     Button::new("next")
         .ghost()
+        .when(frosted, Button::frosted)
         .small()
         .icon("icons/skip-forward.svg")
         .tooltip_above("player-next")

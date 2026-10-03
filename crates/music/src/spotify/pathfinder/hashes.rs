@@ -11,11 +11,15 @@ use http::{Method, Request, header};
 use librespot_core::Session;
 use serde::{Deserialize, Serialize};
 
+use crate::escape;
+
 const WORKER: &str = "https://billowing-resonance-da83.johnwatson.workers.dev/hashes";
 const MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const FILE: &str = "pathfinder.json";
 
-const DESKTOP_OPERATIONS: [(&str, &str); 3] = [
+/// Operations the shared hash service does not list, read from the web player bundle instead.
+const DESKTOP_OPERATIONS: [(&str, &str); 4] = [
+    ("home", "query"),
     ("libraryV3", "query"),
     ("pinLibraryItem", "mutation"),
     ("unpinLibraryItem", "mutation"),
@@ -116,7 +120,7 @@ async fn refreshed(session: &Session, stale: Option<&str>) -> Result<HashMap<Str
 
 async fn download(session: &Session, stale: Option<&str>) -> Result<HashMap<String, String>> {
     let uri = match stale {
-        Some(stale) => format!("{WORKER}?stale={stale}"),
+        Some(stale) => format!("{WORKER}?stale={}", escape::component(stale)),
         None => WORKER.to_owned(),
     };
     let request = Request::builder()
@@ -216,7 +220,7 @@ fn path() -> PathBuf {
     crate::credentials::root().join(FILE)
 }
 
-// Discover desktop library operations missing from the shared hash service.
+// Discover the operations missing from the shared hash service.
 async fn desktop_hash(operation: &str) -> Result<String> {
     // librespot overwrites User-Agent on every request, which makes this page serve
     // the mobile bundle. This unauthenticated client reads only public web assets.

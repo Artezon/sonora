@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::{
-    Album, Artist, ArtistProfile, ArtistRef, LibraryItem, LibraryItemKind, Playlist, ReleaseType,
+    Album, Artist, ArtistProfile, ArtistRef, PinTarget, PinTargetKind, Playlist, ReleaseType,
     SavedArtist, Track,
 };
 
@@ -68,7 +68,8 @@ pub fn moment(attributes: &Value, key: &str) -> Option<i64> {
     let year: i64 = parts.next()?.parse().ok()?;
     let month: i64 = parts.next().unwrap_or("1").parse().unwrap_or(1);
     let day: i64 = parts.next().unwrap_or("1").parse().unwrap_or(1);
-    let mut clock = time.trim_end_matches('Z').split(':');
+    let (time, zone) = zone_of(time.trim_end_matches('Z'));
+    let mut clock = time.split(':');
     let hour: i64 = clock.next().unwrap_or("0").parse().unwrap_or(0);
     let minute: i64 = clock.next().unwrap_or("0").parse().unwrap_or(0);
     let second: i64 = clock
@@ -77,7 +78,20 @@ pub fn moment(attributes: &Value, key: &str) -> Option<i64> {
         .unwrap_or("0")
         .parse()
         .unwrap_or(0);
-    Some(days(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
+    Some(days(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second - zone)
+}
+
+fn zone_of(time: &str) -> (&str, i64) {
+    let Some(at) = time.rfind(['+', '-']).filter(|&at| at > 0) else {
+        return (time, 0);
+    };
+    let (clock, zone) = time.split_at(at);
+    let sign = if zone.starts_with('-') { -1i64 } else { 1 };
+    let zone = zone.trim_start_matches(['+', '-']);
+    let mut parts = zone.split(':');
+    let hours: i64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    let minutes: i64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    (clock, sign * (hours * 3_600 + minutes * 60))
 }
 
 /// Days from the epoch to a civil date, by Howard Hinnant's algorithm.
@@ -320,28 +334,6 @@ pub fn library_playlist(value: &Value, owner: &str) -> Option<Playlist> {
     })
 }
 
-/// The id of the Favorite Songs playlist, if this library playlist row is it. Apple keeps the
-/// listener's favorites as a playlist it manages itself: tagged `favorited`, with nothing in
-/// the catalog behind it and no editing allowed. Its name is localized, so the name is never
-/// what identifies it. The tags only come when the listing asks for them with
-/// `extend[library-playlists]=tags`.
-pub fn favorites_playlist(value: &Value) -> Option<String> {
-    let attributes = value.get("attributes")?;
-    let flag = |name: &str| {
-        attributes
-            .get(name)
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    };
-    let tagged = attributes
-        .get("tags")
-        .and_then(Value::as_array)
-        .is_some_and(|tags| tags.iter().any(|tag| tag.as_str() == Some("favorited")));
-    (tagged && !flag("canEdit") && !flag("hasCatalog"))
-        .then(|| value.get("id")?.as_str().map(str::to_owned))
-        .flatten()
-}
-
 /// One library artist. Only the catalog counterpart has a picture, and only its id can open a
 /// page, so an artist without one is left out.
 pub fn saved_artist(value: &Value) -> Option<SavedArtist> {
@@ -364,7 +356,8 @@ pub fn artist(value: &Value) -> Option<Artist> {
         name: text(attributes, "name")?,
         cover_large: artwork(attributes, HERO),
         biography: text(attributes, "editorialNotes")
-            .or_else(|| text(attributes.get("editorialNotes")?, "standard")),
+            .or_else(|| text(attributes.get("editorialNotes")?, "standard"))
+            .or_else(|| text(attributes, "artistBio")),
         monthly_listeners: None,
         top_tracks: view(value, "top-songs").iter().filter_map(song).collect(),
         albums: view(value, "full-albums")
@@ -382,7 +375,20 @@ pub fn artist_profile(value: &Value) -> Option<ArtistProfile> {
         cover_large: artwork(attributes, HERO),
         biography: attributes
             .get("editorialNotes")
-            .and_then(|notes| text(notes, "standard").or_else(|| text(notes, "short"))),
+            .and_then(|notes| text(notes, "standard").or_else(|| text(notes, "short")))
+            .or_else(|| text(attributes, "artistBio")),
+    })
+}
+
+/// One artist out of a similar-artists view: an id to open and a face for the rail's
+/// artists tab.
+pub fn similar_artist(value: &Value) -> Option<SavedArtist> {
+    let attributes = value.get("attributes")?;
+    Some(SavedArtist {
+        id: value.get("id")?.as_str()?.to_owned(),
+        name: text(attributes, "name")?,
+        cover: artwork(attributes, ART),
+        added_at: None,
     })
 }
 
@@ -398,44 +404,102 @@ pub fn view<'a>(value: &'a Value, name: &str) -> &'a [Value] {
         .unwrap_or_default()
 }
 
-/// One row of the mixed library landing, whatever kind of thing it is.
+/// The listener's pins in pin order, each with its library id, read from an answer that sent
+/// its resources as a map.
 ///
-/// The uri is Spotify-shaped on purpose: a sidebar pin is built by taking what follows the last
-/// colon, so an id on its own could never become one.
-pub fn library_item(value: &Value, owner: &str) -> Option<LibraryItem> {
-    let kind = value.get("type")?.as_str()?;
-    let attributes = value.get("attributes")?;
-    let (kind, uri, subtitle) = match kind {
-        "library-albums" | "albums" => (
-            LibraryItemKind::Album,
-            catalog(value)
+/// Every pin in `data` is only a reference, looked up in `resources`. Its catalog reference is
+/// swapped for the catalog item there too, since a library artist has no artwork of its own.
+/// A pinned song or video has no sidebar row and is left out.
+pub fn pins(value: &Value, owner: &str) -> Vec<(String, PinTarget)> {
+    let resource = |reference: &Value| {
+        let kind = reference.get("type")?.as_str()?;
+        let id = reference.get("id")?.as_str()?;
+        value.get("resources")?.get(kind)?.get(id).cloned()
+    };
+    let Some(references) = value.get("data").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    references
+        .iter()
+        .filter_map(|reference| {
+            let mut pin = resource(reference)?;
+            if let Some(found) = catalog(&pin).and_then(resource)
+                && let Some(slot) = pin.pointer_mut("/relationships/catalog/data/0")
+            {
+                *slot = found;
+            }
+            let mut target = pin_target(&pin, owner)?;
+            target.pinned = true;
+            Some((pin.get("id")?.as_str()?.to_owned(), target))
+        })
+        .collect()
+}
+
+/// The library id of the artist in a library search answer whose catalog artist is `id`. The
+/// rows are read whether the answer lists them inline or sends them as a resource map.
+pub fn library_artist(value: &Value, id: &str) -> Option<String> {
+    let inline = value
+        .pointer("/results/library-artists/data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    let mapped = value
+        .pointer("/resources/library-artists")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|rows| rows.values());
+    inline
+        .chain(mapped)
+        .find(|row| {
+            catalog(row)
                 .and_then(|found| found.get("id"))
                 .and_then(Value::as_str)
-                .map(str::to_owned),
+                == Some(id)
+        })
+        .and_then(|row| row.get("id")?.as_str().map(str::to_owned))
+}
+
+/// The uri Sonora knows an Apple item by in the sidebar. It is Spotify-shaped on purpose: a
+/// sidebar pin is built by taking what follows the last colon.
+pub fn pin_uri(kind: PinTargetKind, id: &str) -> Option<String> {
+    let part = match kind {
+        PinTargetKind::Playlist => "playlist",
+        PinTargetKind::Album => "album",
+        PinTargetKind::Artist => "artist",
+        _ => return None,
+    };
+    Some(format!("apple:{part}:{id}"))
+}
+
+/// One library album, artist or playlist as an unpinned pin target. An album or artist needs
+/// the catalog item behind it, whose id is the one Sonora opens.
+fn pin_target(value: &Value, owner: &str) -> Option<PinTarget> {
+    let kind = value.get("type")?.as_str()?;
+    let attributes = value.get("attributes")?;
+    let (kind, id, subtitle) = match kind {
+        "library-albums" | "albums" => (
+            PinTargetKind::Album,
+            catalog(value)
+                .and_then(|found| found.get("id"))
+                .and_then(Value::as_str),
             text(attributes, "artistName").unwrap_or_default(),
         ),
         "library-playlists" | "playlists" => (
-            LibraryItemKind::Playlist,
-            value.get("id").and_then(Value::as_str).map(str::to_owned),
+            PinTargetKind::Playlist,
+            value.get("id").and_then(Value::as_str),
             text(attributes, "curatorName").unwrap_or_else(|| owner.to_owned()),
         ),
         "library-artists" | "artists" => (
-            LibraryItemKind::Artist,
+            PinTargetKind::Artist,
             catalog(value)
                 .and_then(|found| found.get("id"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+                .and_then(Value::as_str),
             String::new(),
         ),
         _ => return None,
     };
-    let part = match kind {
-        LibraryItemKind::Album => "album",
-        LibraryItemKind::Artist => "artist",
-        _ => "playlist",
-    };
-    Some(LibraryItem {
-        uri: format!("apple:{part}:{}", uri?),
+    Some(PinTarget {
+        uri: pin_uri(kind, id?)?,
         name: text(attributes, "name")?,
         subtitle,
         cover: artwork(attributes, ART)
@@ -629,9 +693,9 @@ mod tests {
                             "artwork": { "url": "https://is1.mzstatic.com/a/{w}x{h}bb.jpg" } },
             "relationships": { "catalog": { "data": [{ "id": "1691419979", "attributes": {} }] } }
         });
-        let item = library_item(&row, "Me").unwrap();
+        let item = pin_target(&row, "Me").unwrap();
         assert_eq!(item.uri, "apple:album:1691419979");
-        assert_eq!(item.kind, LibraryItemKind::Album);
+        assert_eq!(item.kind, PinTargetKind::Album);
         assert_eq!(item.subtitle, "Of Virtue");
     }
 
@@ -641,6 +705,6 @@ mod tests {
             "type": "library-music-videos",
             "attributes": { "name": "A Video" }
         });
-        assert!(library_item(&row, "Me").is_none());
+        assert!(pin_target(&row, "Me").is_none());
     }
 }

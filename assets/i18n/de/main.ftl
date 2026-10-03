@@ -142,16 +142,12 @@ menu-copy = Kopieren
 menu-paste = Einfügen
 menu-select-all = Alle auswählen
 menu-remove-from-queue = Aus der Warteschlange entfernen
-menu-open-playlist = Playlist öffnen
-menu-play-playlist = Playlist abspielen
 menu-rename-playlist = Playlist umbenennen
 menu-delete-playlist = Playlist löschen
 menu-add-playlist-to-library = Zur Bibliothek hinzufügen
 menu-remove-playlist-from-library = Aus der Bibliothek entfernen
 menu-make-playlist-public = Öffentlich machen
 menu-make-playlist-private = Privat machen
-menu-open-album = Album öffnen
-menu-play-album = Album abspielen
 menu-play-artist = Künstler abspielen
 
 # playlist editor
@@ -255,7 +251,7 @@ login-signed-in = Angemeldet als { $name }
 login-failed-title = Anmeldung fehlgeschlagen
 login-problem-region = Spotify öffnet keine Sitzung aus dem Land, in dem du dich befindest. Melde dich aus deinem Heimatland an oder ändere das Land in deinem Spotify-Konto.
 login-problem-credentials = Deine gespeicherte Spotify-Sitzung ist nicht mehr gültig. Melde dich erneut an, um fortzufahren.
-login-problem-network = Sonora konnte Spotify nicht erreichen. Prüfe deine Internetverbindung und versuche es erneut.
+login-problem-network = Sonora konnte den Musikdienst nicht erreichen. Prüfe deine Internetverbindung und versuche es erneut.
 login-problem-cancelled = Du hast die Browserseite geschlossen, bevor die Anmeldung bestätigt war. Fang noch einmal an, um sie abzuschließen.
 login-problem-refused = Spotify hat die Anmeldung abgelehnt. Warte einen Moment und versuche es erneut.
 login-problem-premium = Sonora streamt über Spotify Premium, und dieses Konto hat es nicht. Melde dich mit einem Premium-Konto an, um fortzufahren.
@@ -285,7 +281,6 @@ login-account-title = Konto auswählen
 login-account-detail = Diese Sitzung ist bei mehreren Google-Konten angemeldet. Wähle das Konto, das Sonora verwenden soll.
 
 # album and playlist pages
-detail-album = Album
 detail-playlist = Playlist
 detail-play-album = Album abspielen
 detail-play-playlist = Playlist abspielen
@@ -293,7 +288,6 @@ detail-play-playlist = Playlist abspielen
 # play button
 play-pause = Pause
 play-resume = Fortsetzen
-play-loading = Wird geladen…
 play-shuffle = Zufallswiedergabe
 
 # artist page
@@ -339,8 +333,6 @@ release-meta = { $year } • { $kind }
 
 # home page
 home-quick-picks = Schnellauswahl
-home-listen-again = Noch einmal anhören
-home-quick-picks-eyebrow = Mit einem Song starten
 home-quick-picks-empty = Markiere ein paar Songs als Favoriten, dann erscheinen sie hier
 
 # search page
@@ -443,6 +435,7 @@ month-11 = Nov.
 month-12 = Dez.
 
 # settings
+settings-search = Einstellungen durchsuchen
 settings-tab-general = Allgemein
 settings-tab-appearance = Erscheinungsbild
 settings-tab-playback = Wiedergabe
@@ -453,7 +446,7 @@ settings-theme-detail = Wähle die Farbpalette der Anwendung
 settings-opacity = Deckkraft
 settings-opacity-detail = Deckkraft des App-Hintergrunds anpassen
 settings-opacity-value = { $percent } %
-settings-theme-config = Konfiguration öffnen
+settings-theme-folder = Ordner öffnen
 settings-adaptive = Adaptives Design
 settings-adaptive-detail = Färbt die Palette nach dem Cover des laufenden Albums
 settings-visualizer = Visualizer
@@ -468,8 +461,10 @@ settings-saver = Energiesparen
 settings-saver-detail = Bildrate der Animationen begrenzen, wenn Sonora nicht im Fokus ist, ab dem nächsten Start
 settings-corners = Ecken
 settings-corners-detail = Wie stark Flächen und Bedienelemente abgerundet sind
-settings-blur = Weichzeichnen
-settings-blur-detail = Das Fenster über einen weichgezeichneten Desktop zeichnen. Braucht eine Deckkraft unter 100 %
+settings-blur = Oberfläche weichzeichnen
+settings-blur-detail = Menüs und schwebende Bedienelemente mattieren
+settings-blur-window = Fenster weichzeichnen
+settings-blur-window-detail = Das Fenster über einen weichgezeichneten Desktop zeichnen. Braucht eine Deckkraft unter 100 %
 settings-font = Schriftgröße
 settings-font-detail = Basisgröße des Textes, alles andere skaliert mit
 settings-font-value = { $size } px
@@ -655,6 +650,7 @@ theme-ocean = Ozean
 theme-rose = Rosé
 theme-lavender = Lavendel
 theme-amber = Bernstein
+theme-unavailable = { $name } (nicht verfügbar)
 
 # corners
 corners-square = Eckig

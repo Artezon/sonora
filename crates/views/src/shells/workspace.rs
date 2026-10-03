@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Render, StyleRefinement};
@@ -6,39 +6,19 @@ use gpui::{Window, div};
 use input::WORKSPACE_CONTEXT;
 use state::{Playback, Queue, SideTab};
 use ui::{
-    Activate, ActiveTheme as _, Deselect, Remove, SelectNext, SelectPrevious, ease_out_expo,
-    entering, entrance_span, shown_listing, veiled,
+    Activate, ActiveTheme as _, Deselect, Entrance, Remove, SelectNext, SelectPrevious, entering,
+    shown_listing, veiled,
 };
 
 use crate::chrome::{
     Chrome, PlayerBar, SidebarLeft, SidebarRight, TitleBarOptions, ToastStack, UpdateNotice,
 };
 use crate::shared::confirm::Confirm;
+use crate::shared::menus::CardMenu;
 use crate::shared::playlist_editor::PlaylistEditor;
 use crate::shared::tag_editor::TagEditor;
 use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
-
-#[derive(Clone, Copy)]
-struct ContentTransition {
-    started: Instant,
-    span: Duration,
-}
-
-impl ContentTransition {
-    fn hidden(self) -> f32 {
-        if self.span.is_zero() {
-            return 0.;
-        }
-        let elapsed = self.started.elapsed().as_secs_f32();
-        let progress = (elapsed / self.span.as_secs_f32()).clamp(0., 1.);
-        1. - ease_out_expo(progress)
-    }
-
-    fn running(self) -> bool {
-        self.started.elapsed() < self.span
-    }
-}
 
 pub(crate) struct Workspace {
     sidebar: Entity<SidebarLeft>,
@@ -47,11 +27,15 @@ pub(crate) struct Workspace {
     playlist_editor: Entity<PlaylistEditor>,
     tag_editor: Entity<TagEditor>,
     confirm: Entity<Confirm>,
+    card_menu: Entity<CardMenu>,
     widevine: Entity<WidevinePrompt>,
     toasts: Entity<ToastStack>,
     notice: Entity<UpdateNotice>,
     content: AnyView,
-    transition: Option<ContentTransition>,
+    /// A screen's own header, floated over the top of the page and outside its transition.
+    /// The page pads itself to start beneath it.
+    header: Option<AnyView>,
+    transition: Option<Entrance>,
     focus: FocusHandle,
 }
 
@@ -73,10 +57,12 @@ impl Workspace {
             playlist_editor: PlaylistEditor::entity(cx),
             tag_editor: TagEditor::entity(cx),
             confirm: Confirm::entity(cx),
+            card_menu: CardMenu::entity(cx),
             widevine: cx.new(WidevinePrompt::new),
             toasts: cx.new(ToastStack::new),
             notice: cx.new(UpdateNotice::new),
             content,
+            header: None,
             transition: None,
             focus: cx.focus_handle(),
         }
@@ -104,8 +90,16 @@ impl Workspace {
         &self.content
     }
 
-    pub fn set_content(&mut self, content: AnyView, cx: &mut Context<Self>) {
+    /// Shows a page, with the header it wants above it or none. The two arrive together so
+    /// a header can never outlive its screen.
+    pub fn set_content(
+        &mut self,
+        content: AnyView,
+        header: Option<AnyView>,
+        cx: &mut Context<Self>,
+    ) {
         self.content = content;
+        self.header = header;
         cx.notify();
     }
 
@@ -115,13 +109,10 @@ impl Workspace {
             return Duration::ZERO;
         }
 
-        let span = entrance_span();
-        self.transition = Some(ContentTransition {
-            started: Instant::now(),
-            span,
-        });
+        let entrance = Entrance::start();
+        self.transition = Some(entrance);
         cx.notify();
-        span
+        entrance.span()
     }
 
     pub fn finish_transition(&mut self, cx: &mut Context<Self>) {
@@ -161,6 +152,7 @@ impl Shell for Workspace {
             offset: sidebar.occupied_width(),
             border: true,
             content,
+            transparent: false,
         }
     }
 }
@@ -168,11 +160,12 @@ impl Shell for Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let right = self.sidebar_right.read(cx).occupied_width(window);
+        let reserved = self.sidebar_right.read(cx).reserved_width();
         self.sidebar
-            .update(cx, |sidebar, cx| sidebar.adapt(right, window, cx));
+            .update(cx, |sidebar, cx| sidebar.adapt(reserved, window, cx));
         let left = self.sidebar.read(cx).occupied_width();
         let overlay_width = self.sidebar.read(cx).overlay_width();
-        Chrome::publish(left, right, cx);
+        Chrome::publish(left, right, reserved, cx);
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
         let bar_height = PlayerBar::height(window, cx);
@@ -277,35 +270,56 @@ impl Render for Workspace {
                             .min_h_0()
                             .ml(overlay_width)
                             .when(overlay, |this| this.overflow_hidden())
-                            .when(hidden > 0., |this| this.overflow_hidden())
                             .when(covered, |this| this.hidden())
                             .child(
                                 div()
-                                    .absolute()
-                                    .left(-overlay_width)
-                                    .right_0()
-                                    .top_0()
-                                    .bottom_0()
+                                    .relative()
                                     .flex()
                                     .flex_col()
-                                    .map(|this| match dissolving {
-                                        true => entering(this, hidden),
-                                        false => veiled(this, hidden),
+                                    .flex_1()
+                                    .min_h_0()
+                                    .when(hidden > 0., |this| this.overflow_hidden())
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left(-overlay_width)
+                                            .right_0()
+                                            .top_0()
+                                            .bottom_0()
+                                            .flex()
+                                            .flex_col()
+                                            .map(|this| match dissolving {
+                                                true => entering(this, hidden),
+                                                false => veiled(this, hidden),
+                                            })
+                                            .child(content),
+                                    )
+                                    .when(scrim > 0., |this| {
+                                        this.child(
+                                            div()
+                                                .absolute()
+                                                .left_0()
+                                                .right_0()
+                                                .top_0()
+                                                .bottom_0()
+                                                .bg(backdrop)
+                                                .opacity(scrim),
+                                        )
                                     })
-                                    .child(content),
-                            )
-                            .when(scrim > 0., |this| {
-                                this.child(
-                                    div()
-                                        .absolute()
-                                        .left_0()
-                                        .right_0()
-                                        .top_0()
-                                        .bottom_0()
-                                        .bg(backdrop)
-                                        .opacity(scrim),
-                                )
-                            }),
+                                    // The header comes last, so it paints over the page and
+                                    // the scrim, and spans the same width the page does
+                                    // beneath an overlaid sidebar.
+                                    .when_some(self.header.clone(), |this, header| {
+                                        this.child(
+                                            div()
+                                                .absolute()
+                                                .left(-overlay_width)
+                                                .right_0()
+                                                .top_0()
+                                                .child(header),
+                                        )
+                                    }),
+                            ),
                     )
                     .child(self.sidebar_right.clone())
                     .when(overlay, |this| this.child(self.sidebar.clone())),
@@ -320,6 +334,7 @@ impl Render for Workspace {
                     )
                     .child(self.toasts.clone()),
             )
+            .child(self.card_menu.clone())
             .child(self.playlist_editor.clone())
             .child(self.tag_editor.clone())
             .child(self.confirm.clone())

@@ -3,11 +3,10 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{App, Entity, MouseDownEvent, SharedString, Window, div};
 use music::Track;
-use state::{Playback, PlaybackState};
-use ui::{ActiveTheme as _, Card, Pinnable, Text, clock, tabular};
+use state::Playback;
+use ui::{ActiveTheme as _, Card, Text, clock, tabular};
 
-use crate::shared::cells;
-use crate::shared::pins::Pinned as _;
+use crate::shared::cards;
 
 pub(crate) type ContextHandler = Rc<dyn Fn(usize, &MouseDownEvent, &mut Window, &mut App)>;
 pub(crate) type StartHandler = Rc<dyn Fn(usize, &mut App)>;
@@ -17,7 +16,6 @@ pub(crate) struct TrackCard {
     place: usize,
     tracks: Rc<Vec<Track>>,
     playback: Entity<Playback>,
-    active: Option<String>,
     detailed: bool,
     context: Option<ContextHandler>,
     start: Option<StartHandler>,
@@ -29,14 +27,12 @@ impl TrackCard {
         place: usize,
         tracks: Rc<Vec<Track>>,
         playback: Entity<Playback>,
-        active: Option<&str>,
     ) -> Self {
         Self {
             id,
             place,
             tracks,
             playback,
-            active: active.map(str::to_owned),
             detailed: false,
             context: None,
             start: None,
@@ -61,13 +57,7 @@ impl TrackCard {
     pub(crate) fn render(self, cx: &App) -> Card {
         let theme = *cx.theme();
         let track = &self.tracks[self.place];
-        let current = track.id.as_deref() == self.active.as_deref();
-        let tint = match current {
-            true => theme.primary,
-            false => theme.foreground,
-        };
-        let playing = current && self.playback.read(cx).state() == &PlaybackState::Playing;
-        let pin = track.pin();
+        let (current, playing) = cards::track_status(track, &self.playback, cx);
         let pressed_tracks = self.tracks.clone();
         let pressed_playback = self.playback.clone();
         let pressed_start = self.start.clone();
@@ -76,16 +66,8 @@ impl TrackCard {
         let transport_start = self.start.clone();
         let place = self.place;
 
-        let artists = (!self.detailed || featured(track)).then(|| {
-            cells::artist_links(
-                SharedString::new_static("pick-artist"),
-                track.artist_refs.clone(),
-                track.artists.clone(),
-                theme.muted_foreground,
-            )
-            .text_size(theme.text(Text::Small))
-            .truncate()
-        });
+        let artists = (!self.detailed || featured(track))
+            .then(|| cards::track_artists(SharedString::new_static("pick-artist"), track, &theme));
         let length = self.detailed.then(|| {
             div()
                 .text_size(theme.text(Text::Small))
@@ -94,10 +76,7 @@ impl TrackCard {
                 .child(clock(track.duration))
         });
 
-        Card::new((self.id, place), SharedString::from(track.name.clone()))
-            .cover(track.cover.clone())
-            .tint(tint)
-            .when(track.explicit, Card::explicit)
+        cards::track_card((self.id, place), track, &self.playback, cx)
             .when_some(artists, Card::bare_meta)
             .when_some(length, Card::trailing)
             .when_some(self.context, |card, handler| {
@@ -122,7 +101,6 @@ impl TrackCard {
                     cx,
                 );
             })
-            .when_some(pin, Pinnable::pin)
             .min_w_0()
     }
 }

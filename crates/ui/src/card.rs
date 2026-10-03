@@ -8,13 +8,15 @@ use gpui::{
 };
 
 use crate::ExplicitBadge;
+use crate::artwork::cover_palette;
 use crate::artwork::{Artwork, Avatar, ROUNDED};
 use crate::button::Button;
+use crate::glass::{GLASS_BLUR, blurring};
 use crate::label::upper;
 use crate::metrics::{LEADING, Text, snapped};
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
-use crate::tooltip::{Perch, Tooltip};
+use crate::tooltip::{Perch, Tipped as _};
 
 const BAR_TITLE: (Pixels, Pixels) = (px(140.), px(11.));
 const BAR_META: (Pixels, Pixels) = (px(90.), px(9.));
@@ -22,6 +24,8 @@ const PLAY_RATIO: f32 = 0.24;
 const PLAY_MIN: Pixels = px(20.);
 const PLAY_MAX: Pixels = px(40.);
 const PLAY_INSET: Pixels = px(8.);
+/// How much of the accent colour the play button keeps over the artwork it blurs.
+const PLAY_FILL: f32 = 0.55;
 const SCRIM_RATIO: f32 = 0.45;
 const SCRIM_MIN: Pixels = px(14.);
 const TIGHT: Pixels = px(2.);
@@ -312,6 +316,10 @@ impl RenderOnce for Card {
         let inset = theme.metrics.pad;
         let height = snapped(theme.metrics.list_row, window);
         let listed = art.is_none() && tile.is_none();
+        // The play button wears the cover's own colours once the cache has the art,
+        // and the theme's primary until then.
+        let play_fill =
+            theme.cover_fill(cover.as_deref().and_then(|cover| cover_palette(cover, cx)));
         let art_radius = art_radius.or_else(|| tile.map(|_| theme.radius));
         let art = art.or(tile).unwrap_or(snapped(height - inset * 2., window));
         let hovered = match (hovered, fill) {
@@ -366,6 +374,9 @@ impl RenderOnce for Card {
                                     .tooltip(hint)
                                     .size(size)
                                     .rounded_full()
+                                    .fill(play_fill.background.opacity(PLAY_FILL), play_fill.hover)
+                                    .tint(play_fill.foreground)
+                                    .when(blurring(cx), |button| button.backdrop_blur(GLASS_BLUR))
                                     .shadow_sm()
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
@@ -403,7 +414,7 @@ impl RenderOnce for Card {
                                     .rounded(corner)
                                     .cursor_pointer()
                                     .bg(theme.overlay)
-                                    .tooltip(Tooltip::build(hint, Perch::Pointer))
+                                    .tip(hint, Perch::Pointer)
                                     .child(
                                         svg()
                                             .path(icons::path(glyph))
@@ -445,7 +456,7 @@ impl RenderOnce for Card {
             .when_some(weight, |this, weight| this.font_weight(weight))
             .when(underline, |this| this.hover(|style| style.underline()))
             .when(hint && !title.is_empty(), |this| {
-                this.tooltip(Tooltip::label(title.clone(), Perch::Pointer))
+                this.tip_label(title.clone(), Perch::Pointer)
             })
             .text_color(tint.unwrap_or(theme.foreground))
             .when_some(size, |this, size| this.text_size(theme.text(size)))

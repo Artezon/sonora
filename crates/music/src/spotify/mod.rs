@@ -81,6 +81,10 @@ impl MusicProvider for SpotifyProvider {
         "spotify"
     }
 
+    fn reach(&self) -> Option<String> {
+        Some("apresolve.spotify.com".to_owned())
+    }
+
     fn public_art(&self) -> bool {
         true
     }

@@ -60,6 +60,7 @@ impl DeezerProvider {
                 let profile = client.profile().await?;
                 Ok(Some(session(client, profile)))
             }
+            Err(error) if crate::trouble::offline(&format!("{error:#}")) => Err(error),
             Err(error) => {
                 log::warn!("deezer: the stored session is no longer usable: {error:#}");
                 Ok(None)
@@ -96,6 +97,10 @@ impl MusicProvider for DeezerProvider {
 
     fn slug(&self) -> &'static str {
         "deezer"
+    }
+
+    fn reach(&self) -> Option<String> {
+        Some("www.deezer.com".to_owned())
     }
 
     fn sign_in_options(&self) -> Vec<SignIn> {

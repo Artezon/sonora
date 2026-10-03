@@ -4,16 +4,16 @@ use gpui::prelude::*;
 
 use gpui::{
     Animation, AnimationExt as _, App, Bounds, Context, Div, DragMoveEvent, Entity, FontWeight,
-    MouseDownEvent, Pixels, Point, Render, ScrollHandle, ScrollStrategy, ScrollWheelEvent,
-    SharedString, SpringConfig, SpringState, Task, UniformListScrollHandle, Window, div,
-    ease_in_out, px, relative, svg, uniform_list,
+    MouseDownEvent, Pixels, Point, Render, ScrollHandle, ScrollStrategy, SharedString,
+    SpringConfig, SpringState, Task, UniformListScrollHandle, Window, div, ease_in_out, px,
+    relative, svg, uniform_list,
 };
 use i18n::t;
-use music::{Track, Voice};
+use music::{Shape, Track, Voice};
 use router::{Destination, LibraryTab, Link as _};
 use state::{
-    AppSettings, Lyrics, LyricsState, Playback, PlaybackState, Queue, RomanizationScripts, SideTab,
-    Sonora, Whence,
+    AppSettings, Lyrics, LyricsState, Network, Playback, PlaybackState, Queue, RomanizationScripts,
+    Shelf, SideTab, Sonora, Whence,
 };
 use ui::{
     ActiveTheme as _, Button, Card, DraggedPin, Edge, Motion, Motioned as _, Pin, Pinnable as _,
@@ -362,7 +362,7 @@ impl Aside {
             verse_take: 0,
             placing: false,
             context_menu: None,
-            track_menu: ItemMenu::new(playlist_scrollbar),
+            track_menu: ItemMenu::new(playlist_scrollbar, cx),
             drop_gap: None,
             scroll,
             scrollbar,
@@ -409,6 +409,15 @@ impl Aside {
 
     pub(crate) fn tab(&self) -> SideTab {
         self.tab
+    }
+
+    /// Whether the pointer is parked on the panel's scrollbar. Fullscreen
+    /// reads this to keep its chrome awake while the reader holds it.
+    pub(crate) fn scrollbar_active(&self, cx: &App) -> bool {
+        match self.tab {
+            SideTab::Lyrics => self.verse_bar.read(cx).hovered(),
+            SideTab::Queue => self.scrollbar.read(cx).hovered(),
+        }
     }
 
     pub(crate) fn show(&mut self, tab: SideTab, cx: &mut Context<Self>) {
@@ -911,6 +920,7 @@ impl Aside {
         Some(
             self.raised(ui::perched(
                 Button::new("resume-pin")
+                    .secondary()
                     .icon("icons/undo-2.svg")
                     .tooltip("lyrics-follow")
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1435,7 +1445,12 @@ impl Aside {
             (None, LyricsState::Missing) => {
                 vec![wordless("lyrics-missing", "icons/mic-off.svg")]
             }
-            (None, LyricsState::Failed(_)) => vec![empty("lyrics-failed", cx)],
+            (None, LyricsState::Failed(reason)) => {
+                match Network::lost(cx) || music::trouble::offline(reason) {
+                    true => vec![wordless("trouble-offline", "icons/wifi-off.svg")],
+                    false => vec![empty("lyrics-failed", cx)],
+                }
+            }
         };
 
         if state == LyricsState::Ready
@@ -1457,7 +1472,10 @@ impl Aside {
                 .flex_col()
                 .text_size(theme.text(Text::Small))
                 .text_color(theme.muted_foreground)
-                .child(t!("lyrics-source", source = *source))
+                .child(match *source == music::lyrics::LOCAL {
+                    true => t!("lyrics-source-local"),
+                    false => t!("lyrics-source", source = *source),
+                })
                 .when(!writers.is_empty(), |this| {
                     let writers = writers.join(", ");
                     this.child(t!("lyrics-writers", writers = writers.as_str()))
@@ -1660,7 +1678,10 @@ impl Aside {
             Whence::Local => Destination::Local(LibraryTab::Songs),
         };
         let name = match origin.whence {
-            Whence::Saved => t!("library-liked-songs"),
+            Whence::Saved => match Sonora::global(cx).library.read(cx).shape(Shelf::Streaming) {
+                Shape::Saved => t!("library-liked-songs"),
+                Shape::Catalog => t!("nav-songs"),
+            },
             Whence::Local => t!("nav-local"),
             _ => origin.name.clone()?,
         };
@@ -1805,37 +1826,16 @@ impl Render for Aside {
                         this.child(vacant(t!("queue-empty"), cx).flex_1())
                     })
                     .when(self.tab == SideTab::Queue && !empty, |this| {
-                        let gliding = self.scrollbar.clone();
-
                         this.child(
-                            div()
-                                .relative()
-                                .flex_1()
-                                .min_h_0()
+                            Scroller::listing("queue-rows", &self.scrollbar)
+                                .when(effects(), |this| this.fade_edges(px(FADE * 0.5), px(FADE)))
                                 .child(
-                                    div()
-                                        .size_full()
-                                        .when(effects(), |this| {
-                                            this.fade_edges(px(FADE * 0.5), px(FADE))
-                                        })
-                                        .child(
-                                            self.rows(sections, cx)
-                                                .px_2()
-                                                .pt(px(FADE * 0.5))
-                                                .track_scroll(&self.scroll)
-                                                .size_full()
-                                                .on_scroll_wheel(
-                                                    move |event: &ScrollWheelEvent, window, cx| {
-                                                        if event.delta.precise() {
-                                                            return;
-                                                        }
-                                                        gliding
-                                                            .update(cx, |bar, _| bar.nudge(window));
-                                                    },
-                                                ),
-                                        ),
-                                )
-                                .child(self.scrollbar.clone()),
+                                    self.rows(sections, cx)
+                                        .px_2()
+                                        .pt(px(FADE * 0.5))
+                                        .track_scroll(&self.scroll)
+                                        .size_full(),
+                                ),
                         )
                     })
                     .children(self.follow(cx))

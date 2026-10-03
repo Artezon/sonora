@@ -159,6 +159,41 @@ pub fn entrance_span() -> Duration {
     Motion::Base.span() + ENTRANCE_EXTRA
 }
 
+/// One run of the entrance a screen makes as it appears. The renderer reads how much of the
+/// screen is still hidden on every frame and asks for another frame while it runs.
+#[derive(Clone, Copy, Debug)]
+pub struct Entrance {
+    started: Instant,
+    span: Duration,
+}
+
+impl Entrance {
+    pub fn start() -> Self {
+        Self {
+            started: Instant::now(),
+            span: entrance_span(),
+        }
+    }
+
+    pub fn span(self) -> Duration {
+        self.span
+    }
+
+    /// How much of the screen is still hidden, from 1 as the entrance starts to 0 once it ends.
+    pub fn hidden(self) -> f32 {
+        if self.span.is_zero() {
+            return 0.;
+        }
+        let elapsed = self.started.elapsed().as_secs_f32();
+        let progress = (elapsed / self.span.as_secs_f32()).clamp(0., 1.);
+        1. - ease_out_expo(progress)
+    }
+
+    pub fn running(self) -> bool {
+        self.started.elapsed() < self.span
+    }
+}
+
 fn entrance() -> Animation {
     Animation::new(entrance_span()).with_easing(ease_out_expo)
 }
@@ -179,6 +214,22 @@ pub fn veiled<E: Styled>(element: E, hidden: f32) -> E {
 /// frame the cache was filled on.
 pub fn entering<E: Styled>(element: E, hidden: f32) -> E {
     veiled(element, hidden).opacity(1. - hidden.clamp(0., 1.))
+}
+
+/// The entrance's fade with none of its filter, for the one thing that cannot ride the
+/// entrance itself. `veiled` and `entering` are paint filters, and the renderer drops a
+/// backdrop inside a filtered layer, so a surface that frosts what it covers fades its blur in
+/// as a sibling underneath the rising panel rather than rising with it.
+pub trait Fading: Sized {
+    fn fading(self, id: impl Into<ElementId>) -> AnimationElement<Self>;
+}
+
+impl<E: Styled + IntoElement + 'static> Fading for E {
+    fn fading(self, id: impl Into<ElementId>) -> AnimationElement<Self> {
+        self.with_animation(id, entrance(), |element, delta| {
+            element.opacity(delta.clamp(0., 1.))
+        })
+    }
 }
 
 pub trait Rising: Sized {

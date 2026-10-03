@@ -5,17 +5,23 @@ use input::{
     CloseWindow, MinimizeWindow, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
     OpenSettings, ToggleFullscreen, ToggleLyrics, ToggleQueue, ToggleWindowFullscreen, ZoomWindow,
 };
-use router::{Destination, NavigationEvent, SettingsTab, back, forward, navigate};
+use router::{Destination, NavigationEvent, Screen, SettingsTab, back, forward, navigate};
 use state::{
-    ArtistDetail, Detail, GenreDetails, Genres, Home, Io, Library, Playback, Profile, Queue,
-    SYSTEM_FONT, Search, Session, SessionState, Shelf, SideTab, SongDetail, Sonora,
+    ArtistDetail, Detail, GenreDetails, Genres, Home, Io, Library, Network, Playback, Profile,
+    Queue, Reconnected, SYSTEM_FONT, Scan, Search, Session, SessionEvent, SessionState, Shelf,
+    SideTab, SongDetail, Sonora,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;
-use ui::{ActiveTheme as _, Dismiss, Look, Stillness, Theme, ThemeKind, clear_listing};
+use ui::{
+    ActiveTheme as _, Dismiss, Entrance, Look, Stillness, Theme, ThemeKind, clear_listing,
+    entering, veiled,
+};
 
 use crate::chrome::{TitleBar, TitleBarEvent, TitleBarOptions, Toolbar, Tooled};
 use crate::screens::search::SearchView;
+use crate::screens::settings::SettingsHeader;
+use crate::shared::ambient::{self, Ambient};
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
 use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
@@ -44,6 +50,7 @@ struct Screens {
     genre: Option<Entity<GenreView>>,
     genre_detail: Option<Entity<GenreDetails>>,
     settings: Entity<SettingsView>,
+    settings_header: Entity<SettingsHeader>,
 }
 
 struct Shells {
@@ -68,17 +75,22 @@ pub struct Root {
     io: Io,
     login: Entity<LoginView>,
     title_bar: Entity<TitleBar>,
+    ambient: Entity<Ambient>,
     shells: Shells,
     view: RootView,
     signing_in: bool,
     toolbar: Option<Entity<Toolbar>>,
     pending: Option<Focus>,
     navigation_transition: Option<Task<()>>,
+    /// The entrance the shell plays as the window moves into or out of fullscreen.
+    shell_entrance: Option<Entrance>,
     screens: Screens,
-    _adaptive: Entity<Adaptive>,
+    adaptive: Entity<Adaptive>,
     background: Option<gpui::WindowBackgroundAppearance>,
     #[cfg(target_os = "windows")]
     rounded: Option<ui::Rounding>,
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    decorations: gpui::WindowDecorations,
 }
 
 impl Root {
@@ -93,6 +105,7 @@ impl Root {
         cx.observe(&session, |this, session, cx| {
             if matches!(session.read(cx).state(), SessionState::SignedOut) {
                 this.navigation_transition = None;
+                this.shell_entrance = None;
                 this.shells
                     .workspace
                     .update(cx, |workspace, cx| workspace.finish_transition(cx));
@@ -107,6 +120,25 @@ impl Root {
         })
         .detach();
 
+        cx.subscribe(&session, |_, session, event, cx| {
+            if matches!(event, SessionEvent::SignedIn) && !session.read(cx).authenticated() {
+                let settings = Sonora::global(cx).settings.clone();
+                let startup = settings.read(cx).startup().to_owned();
+                if Screen::from_id(&startup).is_some_and(Screen::needs_account) {
+                    settings.update(cx, |settings, cx| {
+                        settings.set_startup(Screen::Home.id(), cx);
+                    });
+                }
+                if matches!(
+                    router::trail(cx).read(cx).current(),
+                    Destination::Library(_)
+                ) {
+                    navigate(Destination::Home, cx);
+                }
+            }
+        })
+        .detach();
+
         let login = cx.new(|cx| LoginView::new(session.clone(), cx));
 
         let navigation = router::trail(cx);
@@ -114,6 +146,11 @@ impl Root {
         cx.subscribe(&navigation, |this, _, event, cx| {
             let NavigationEvent::Moved(destination) = event;
             this.transition_to(destination.clone(), cx);
+        })
+        .detach();
+
+        cx.subscribe(&Network::global(cx), |this, _, _: &Reconnected, cx| {
+            this.reload(cx)
         })
         .detach();
 
@@ -143,6 +180,7 @@ impl Root {
         let search = cx.new(|cx| SearchView::new(queries, genres.clone(), playback.clone(), cx));
 
         let settings = cx.new(|cx| SettingsView::new(session.clone(), playback.clone(), cx));
+        let settings_header = cx.new(|cx| SettingsHeader::new(settings.clone(), cx));
 
         let song_detail = cx.new(|cx| SongDetail::new(session.clone(), io.clone(), cx));
         let song = cx.new(|cx| SongView::new(song_detail.clone(), playback.clone(), cx));
@@ -160,6 +198,7 @@ impl Root {
             )
         });
         let fullscreen = cx.new(|cx| FullscreenView::new(playback.clone(), queue.clone(), cx));
+        let ambient = cx.new(Ambient::new);
 
         let title_bar = cx.new(TitleBar::new);
         cx.subscribe(&title_bar, |this, _, event, cx| match event {
@@ -181,6 +220,12 @@ impl Root {
             if !window.is_window_active() {
                 return;
             }
+            // Pick up plays made on other devices while Sonora was in the background, off the
+            // window coming back to the foreground rather than a poll.
+            Sonora::global(cx)
+                .history
+                .clone()
+                .update(cx, |history, cx| history.refresh(cx));
             let settings = Sonora::global(cx).settings.clone();
             let (stillness, pace) = {
                 let settings = settings.read(cx);
@@ -192,6 +237,10 @@ impl Root {
             ui::motion::apply(stillness, pace, cx);
         })
         .detach();
+
+        cx.observe_window_activation(window, |_, window, cx| update_focus_for_wake(window, cx))
+            .detach();
+        update_focus_for_wake(window, cx);
 
         window
             .observe_window_appearance(|_, cx| {
@@ -210,7 +259,7 @@ impl Root {
                     tint: cx.theme().tint,
                     ..settings.look()
                 };
-                let overrides = settings.theme_overrides().clone();
+                let overrides = settings.theme_overrides();
                 Theme::fade(look, &overrides, cx);
             })
             .detach();
@@ -232,6 +281,7 @@ impl Root {
             toolbar: None,
             pending: None,
             navigation_transition: None,
+            shell_entrance: None,
             screens: Screens {
                 home,
                 history,
@@ -252,11 +302,15 @@ impl Root {
                 genre: None,
                 genre_detail: None,
                 settings,
+                settings_header,
             },
-            _adaptive: adaptive,
+            adaptive,
+            ambient,
             background: None,
             #[cfg(target_os = "windows")]
             rounded: None,
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            decorations: Sonora::global(cx).settings.read(cx).window_decorations(),
         };
         root.show(start, cx);
         root
@@ -370,6 +424,16 @@ impl Root {
             .update(cx, |workspace, cx| workspace.show_side(tab, cx));
     }
 
+    /// Tells the adaptive theme and the wake lock whether fullscreen is up. The ambient
+    /// background is painted out of the cover's hues, so fullscreen samples the cover even with
+    /// the adaptive theme off, and leaving drops the tint again.
+    fn announce_fullscreen(&self, fullscreen: bool, cx: &mut Context<Self>) {
+        self.adaptive
+            .update(cx, |adaptive, cx| adaptive.set_fullscreen(fullscreen, cx));
+        let wake = Sonora::global(cx).wake.clone();
+        wake.update(cx, |wake, cx| wake.set_fullscreen(fullscreen, cx));
+    }
+
     fn toggle_fullscreen(&mut self, cx: &mut Context<Self>) {
         match self.view {
             RootView::Workspace => navigate(Destination::Fullscreen, cx),
@@ -400,14 +464,18 @@ impl Root {
 
     fn transition_to(&mut self, destination: Destination, cx: &mut Context<Self>) {
         self.navigation_transition = None;
+        self.shell_entrance = None;
 
-        let changes_shell = matches!(destination, Destination::Fullscreen)
-            || matches!(self.view, RootView::Fullscreen);
-        if changes_shell || cx.reduce_motion() {
+        let fullscreen = matches!(destination, Destination::Fullscreen);
+        let was_fullscreen = matches!(self.view, RootView::Fullscreen);
+        if fullscreen || was_fullscreen || cx.reduce_motion() {
             self.shells
                 .workspace
                 .update(cx, |workspace, cx| workspace.finish_transition(cx));
             self.show(destination, cx);
+            if fullscreen != was_fullscreen && !cx.reduce_motion() {
+                self.reveal_shell(cx);
+            }
             return;
         }
 
@@ -428,21 +496,76 @@ impl Root {
         }));
     }
 
+    /// Plays the page entrance over the whole shell, for the move into and out of fullscreen.
+    fn reveal_shell(&mut self, cx: &mut Context<Self>) {
+        let entrance = Entrance::start();
+        self.shell_entrance = Some(entrance);
+        self.navigation_transition = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(entrance.span()).await;
+            this.update(cx, |this, cx| {
+                this.navigation_transition = None;
+                this.shell_entrance = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// How much of the shell its entrance still hides, asking for the next frame while it runs.
+    /// A see-through window fades the shell itself, so every frame of that fade is a full
+    /// refresh, or the workspace's cached views would replay the opacity they were first
+    /// painted with.
+    fn shell_hidden(&mut self, window: &mut Window, cx: &Context<Self>) -> f32 {
+        let Some(entrance) = self.shell_entrance else {
+            return 0.;
+        };
+        if cx.reduce_motion() {
+            self.shell_entrance = None;
+            return 0.;
+        }
+        if entrance.running() {
+            match cx.theme().transparent {
+                true => window.on_next_frame(|window, _| window.refresh()),
+                false => window.request_animation_frame(),
+            }
+        }
+        entrance.hidden()
+    }
+
+    /// Loads the screen on show again, which is what a page that gave up while the network was
+    /// gone needs once it is back. Focus stays where the user left it, since nothing moved.
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        let destination = router::trail(cx).read(cx).current();
+        let pending = self.pending.take();
+        self.show(destination, cx);
+        self.pending = pending;
+    }
+
     fn show(&mut self, destination: Destination, cx: &mut Context<Self>) {
         clear_listing(cx);
+        // Leaving settings is what clears the note about the last scan, so every move tells it.
+        let settings = matches!(destination, Destination::Settings(_));
+        Scan::global(cx).update(cx, |scan, cx| scan.viewing_settings(settings, cx));
+        let home = matches!(destination, Destination::Home);
+        self.screens
+            .home
+            .update(cx, |view, cx| view.set_visible(home, cx));
         if let Destination::Fullscreen = destination {
             self.view = RootView::Fullscreen;
+            self.announce_fullscreen(true, cx);
             self.pending = Some(Focus::Fullscreen);
             cx.notify();
             return;
         }
         self.view = RootView::Workspace;
+        self.announce_fullscreen(false, cx);
         self.pending = Some(match destination {
             Destination::Search => Focus::Search,
             _ => Focus::Workspace,
         });
 
         let mut toolbar = None;
+        let mut header = None;
 
         let content: AnyView = match destination {
             Destination::Fullscreen => return,
@@ -508,15 +631,16 @@ impl Root {
                 self.screens
                     .settings
                     .update(cx, |settings, cx| settings.select(tab, cx));
+                header = Some(self.screens.settings_header.clone().into());
                 self.screens.settings.clone().into()
             }
         };
 
         self.toolbar = toolbar;
 
-        self.shells
-            .workspace
-            .update(cx, |workspace, cx| workspace.set_content(content, cx));
+        self.shells.workspace.update(cx, |workspace, cx| {
+            workspace.set_content(content, header, cx)
+        });
         cx.notify();
     }
 }
@@ -570,11 +694,21 @@ fn scripts(custom: bool) -> &'static FontFallbacks {
     }
 }
 
+/// Tells the wake lock whether the window has focus, which the display lock needs.
+fn update_focus_for_wake(window: &Window, cx: &mut App) {
+    let focused = window.is_window_active();
+    let wake = Sonora::global(cx).wake.clone();
+    wake.update(cx, |wake, cx| wake.set_focused(focused, cx));
+}
+
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // An account that could not be reached is still an account, so nothing about a lost
+        // network puts the sign-in page up: the workspace stays, on what the library kept and
+        // on the local files.
         let show_sign_in = match self.session.read(cx).state() {
             SessionState::SignedOut | SessionState::Failed(_) => true,
-            SessionState::Restoring | SessionState::SignedIn(_) => false,
+            SessionState::Restoring | SessionState::SignedIn(_) | SessionState::Offline(_) => false,
             SessionState::Authorizing(_) => self.signing_in,
         };
         self.signing_in = show_sign_in;
@@ -607,7 +741,7 @@ impl Render for Root {
 
         let theme = *cx.theme();
         window.set_rem_size(theme.font_size);
-        let appearance = ui::backdrop(theme.blur, theme.transparent);
+        let appearance = ui::backdrop(theme.blur_window, theme.transparent);
         if self.background != Some(appearance) {
             self.background = Some(appearance);
             window.set_background_appearance(appearance);
@@ -628,15 +762,73 @@ impl Render for Root {
             }
         }
 
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            let decorations = Sonora::global(cx).settings.read(cx).window_decorations();
+            if self.decorations != decorations {
+                self.decorations = decorations;
+                window.request_decorations(decorations);
+            }
+        }
+
         // GPUI can't clip a subtree to a rounded parent (its content mask is a plain
         // rectangle), so on Linux/FreeBSD each edge of the chrome that actually touches a
         // corner rounds itself to match — see `chrome::window_radius`, and `TitleBar` /
         // `PlayerBar` for the top and bottom edges. Rounding the root too keeps its own
         // background quad correct and costs nothing.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(window, Sonora::global(cx).settings.read(cx));
+        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx, window);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<gpui::Pixels> = None;
+
+        // The ambient field covers the window whole and carries the window's own opacity, so
+        // the page colour under it would only stack a second alpha beneath that and leave a
+        // see-through fullscreen reading nearly solid.
+        let ambient = matches!(self.view, RootView::Fullscreen) && ambient::shown(cx);
+
+        // The shell enters the way a page enters the workspace. An opaque window fades it
+        // under a scrim of the page colour, which leaves the workspace's cached views alone,
+        // and a see-through one fades the shell itself. The scrim reaches the bottom corners
+        // of the window, so it rounds them. Fullscreen fades in without the veil. The renderer
+        // drops a backdrop inside a filtered layer, so its frosted controls would show flat
+        // until the veil lifted.
+        let hidden = self.shell_hidden(window, cx);
+        let dissolving = theme.transparent;
+        let veil = matches!(self.view, RootView::Workspace);
+        let shell = match self.view {
+            RootView::Workspace => self.shells.workspace.clone().into_any_element(),
+            RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
+        };
+        let shell = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .when(hidden > 0., |this| match (dissolving, veil) {
+                        (true, true) => entering(this, hidden),
+                        (true, false) => this.opacity(1. - hidden),
+                        (false, true) => veiled(this, hidden),
+                        (false, false) => this,
+                    })
+                    .child(shell),
+            )
+            .when(hidden > 0. && !dissolving, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .when_some(radius, |this, radius| this.rounded_b(radius))
+                        .bg(theme.background)
+                        .opacity(hidden),
+                )
+            });
 
         let root = div()
             .relative()
@@ -647,7 +839,7 @@ impl Render for Root {
             .when_some(radius, |this, radius| {
                 this.rounded(radius).overflow_hidden()
             })
-            .bg(theme.background)
+            .when(!ambient, |this| this.bg(theme.background))
             .text_color(theme.foreground)
             .capture_any_mouse_down(|_, window, cx| {
                 if ui::cancel_middle_scroll(cx) {
@@ -701,16 +893,13 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &ToggleLyrics, _, cx| this.show_side(SideTab::Lyrics, cx)),
             )
+            // The ambient background sits behind everything, title bar included.
+            .when(ambient, |this| this.child(self.ambient.clone()))
             .child(self.title_bar.clone())
             .when_else(
                 show_sign_in,
                 |this| this.child(div().flex().flex_1().min_h_0().child(self.login.clone())),
-                |this| {
-                    this.child(match self.view {
-                        RootView::Workspace => self.shells.workspace.clone().into_any_element(),
-                        RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
-                    })
-                },
+                |this| this.child(shell),
             );
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let root = root.child(WindowFrame::new());

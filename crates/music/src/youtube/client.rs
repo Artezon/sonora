@@ -6,10 +6,11 @@ use async_trait::async_trait;
 use tokio::task::JoinSet;
 use ytmusic::YtMusic;
 
-use crate::youtube::{genres, subscriptions, wire};
+use crate::youtube::{genres, radio, subscriptions, wire};
 use crate::{
-    Album, AlbumDetail, Artist, ArtistProfile, Genre, GenreDetail, HomeFeed, MediaKind, MusicApi,
-    Playlist, PlaylistDetail, SavedArtist, Track, UserProfile,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Feed, Genre, GenreDetail, HomeFeed,
+    MediaKind, MusicApi, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track, UserProfile,
+    escape,
 };
 
 const PORTRAIT_LIMIT: usize = 24;
@@ -56,6 +57,7 @@ impl YouTubeClient {
 #[async_trait]
 impl MusicApi for YouTubeClient {
     fn share_url(&self, kind: MediaKind, id: &str) -> Option<String> {
+        let id = escape::component(id);
         let url = match kind {
             MediaKind::Track => format!("https://music.youtube.com/watch?v={id}"),
             MediaKind::Album => format!("https://music.youtube.com/browse/{id}"),
@@ -178,14 +180,7 @@ impl MusicApi for YouTubeClient {
             .library_playlists()
             .await?
             .into_iter()
-            .filter(|playlist| playlist.id != EPISODES)
-            .map(|playlist| {
-                let mut playlist = wire::playlist(playlist, false, false);
-                if playlist.owned && playlist.owner.is_empty() {
-                    playlist.owner = self.account.clone();
-                }
-                playlist
-            })
+            .filter_map(|playlist| library_playlist(playlist, &self.account))
             .collect())
     }
 
@@ -279,6 +274,35 @@ impl MusicApi for YouTubeClient {
         Ok(self.album(album_id).await?.tracks)
     }
 
+    /// The artist's own releases without the album the page is already showing. Similar
+    /// artists stay out: the client library reads no similarity off artist pages.
+    async fn album_catalogue(
+        &self,
+        album_id: &str,
+        artist_id: Option<&str>,
+    ) -> Result<AlbumCatalogue> {
+        let Some(artist_id) = artist_id else {
+            return Ok(AlbumCatalogue::default());
+        };
+        let artist = self
+            .api
+            .artist(artist_id)
+            .await
+            .with_context(|| format!("cannot load more from artist {artist_id}"))?;
+        let also_like = artist
+            .albums
+            .into_iter()
+            .chain(artist.singles)
+            .map(wire::album)
+            .filter(|album| album.id != album_id)
+            .take(SUGGESTIONS)
+            .collect();
+        Ok(AlbumCatalogue {
+            also_like,
+            similar: Vec::new(),
+        })
+    }
+
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
         let mut detail = self.api.playlist_page(playlist_id).await?;
         detail.tracks = self.api.swap_playable(detail.tracks).await;
@@ -311,15 +335,12 @@ impl MusicApi for YouTubeClient {
         Ok(crate::distinct_covers(&tracks, wanted))
     }
 
-    async fn track_radio(&self, track_id: &str) -> Result<Vec<Track>> {
-        Ok(self
-            .api
-            .track_radio(track_id)
-            .await?
-            .into_iter()
-            .enumerate()
-            .map(|(index, track)| wire::track(track, index as u32))
-            .collect())
+    async fn track_radio(
+        &self,
+        track_id: &str,
+        from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        radio::station(&self.api, track_id, from).await
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
@@ -354,7 +375,16 @@ impl MusicApi for YouTubeClient {
     }
 
     async fn home(&self) -> Result<HomeFeed> {
-        genres::home(&self.api).await
+        let mut feed = genres::home(self.api.clone(), self.account.clone());
+        let mut whole = HomeFeed::default();
+        while let Some(lot) = feed.recv().await {
+            whole = lot?;
+        }
+        Ok(whole)
+    }
+
+    async fn home_paged(&self) -> Result<Feed> {
+        Ok(genres::home(self.api.clone(), self.account.clone()))
     }
 
     async fn genres(&self) -> Result<Vec<Genre>> {
@@ -382,4 +412,18 @@ fn collect_thumbnails(node: &serde_json::Value) -> Vec<ytmusic::Thumbnail> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// A playlist of the library as Sonora lists it: one the user made is theirs by name, and the
+/// saved-episodes list YouTube keeps for podcasts is left out.
+pub(crate) fn library_playlist(source: ytmusic::Playlist, account: &str) -> Option<Playlist> {
+    if source.id == EPISODES {
+        return None;
+    }
+    let mut playlist = wire::playlist(source, false, false);
+    if playlist.owned && playlist.owner.is_empty() {
+        playlist.owner = account.to_owned();
+    }
+
+    Some(playlist)
 }

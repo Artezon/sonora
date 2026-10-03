@@ -15,6 +15,7 @@ mod auth;
 mod client;
 mod playback;
 mod progressive;
+mod recommend;
 mod stream;
 mod wire;
 
@@ -73,6 +74,7 @@ impl AppleProvider {
                 let profile = client.profile().await?;
                 Ok(Some(session(client, profile)))
             }
+            Err(error) if crate::trouble::offline(&format!("{error:#}")) => Err(error),
             Err(error) => {
                 log::warn!("apple: the stored account is no longer usable: {error:#}");
                 Ok(None)
@@ -95,14 +97,16 @@ fn session(client: AppleClient, profile: crate::UserProfile) -> ProviderSession 
         shape: Shape::Catalog,
         authenticated: true,
         // Apple keeps no play counts. Stations it does have, through the same endpoint the web
-        // player's autoplay uses; an artist can be favorited like anything else; and the
-        // library is its own thing, which songs and albums are added to apart from the star.
+        // player's autoplay uses; an artist can be favorited like anything else; the
+        // library is its own thing, which songs and albums are added to apart from the star,
+        // and pins live behind `me/library/pins`.
         // A favorited song still lands in it, through the account's Add Favorite Songs to
         // Library setting, which is on by default.
         capabilities: Capabilities {
             radio: true,
             follow_artists: true,
             library: true,
+            pins: true,
             ..Capabilities::NONE
         },
     }
@@ -122,6 +126,10 @@ impl MusicProvider for AppleProvider {
 
     fn slug(&self) -> &'static str {
         "apple"
+    }
+
+    fn reach(&self) -> Option<String> {
+        Some("music.apple.com".to_owned())
     }
 
     fn sign_in_options(&self) -> Vec<SignIn> {

@@ -5,7 +5,7 @@ use anyhow::Result;
 use gpui::{Context, Entity, Task};
 use music::{Album, ArtistRef, Playlist, Track};
 
-use crate::{Io, Library, Session, SessionEvent, Shelf, join};
+use crate::{Io, Library, Network, Session, SessionEvent, Shelf, join};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 const LIMIT: usize = 20;
@@ -277,8 +277,12 @@ impl Search {
                     albums: salvaged(albums, kept_albums, &mut trouble),
                     playlists: salvaged(playlists, kept_playlists, &mut trouble),
                 };
-                if trouble.is_empty() {
-                    this.served = Some(query);
+                match trouble.first() {
+                    Some(reason) => Network::failed(reason, cx),
+                    None => {
+                        Network::reached(cx);
+                        this.served = Some(query);
+                    }
                 }
                 this.error =
                     (!trouble.is_empty() && this.catalog.is_empty()).then(|| trouble.join(" · "));

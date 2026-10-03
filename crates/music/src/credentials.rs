@@ -51,29 +51,3 @@ pub(crate) fn remove(path: &Path) {
         log::warn!("credentials: cannot remove {}: {error}", path.display());
     }
 }
-
-/// Moves every provider's sign-in from where releases before 0.31 kept it to its own
-/// folder, rewriting each file so it ends up owner-only. Runs once at startup, before
-/// any provider reads its credentials. Nothing else in the crate looks at the old paths.
-pub fn migrate() {
-    crate::spotify::auth::migrate();
-    crate::youtube::migrate();
-}
-
-/// Rewrites a legacy credential file at its new path and deletes the old one. An existing
-/// new file wins, so the old one is only removed.
-pub(crate) fn adopt(from: &Path, to: &Path) {
-    if !from.exists() {
-        return;
-    }
-    if !to.exists() {
-        let copied = std::fs::read(from)
-            .with_context(|| format!("cannot read {}", from.display()))
-            .and_then(|body| write(to, &body));
-        if let Err(error) = copied {
-            log::warn!("credentials: cannot adopt {}: {error:#}", from.display());
-            return;
-        }
-    }
-    remove(from);
-}

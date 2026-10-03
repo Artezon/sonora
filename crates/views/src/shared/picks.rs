@@ -2,10 +2,11 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{App, ClickEvent, Entity, MouseDownEvent, Pixels, SharedString, Window, div};
-use music::Track;
+use music::{GenreItem, Track};
 use state::Playback;
 use ui::{ActiveTheme as _, Button, Card, eyebrow, heading, snapped, vacant};
 
+use crate::shared::cards;
 use crate::shared::track_card::{ContextHandler, StartHandler, TrackCard};
 
 const ROWS: usize = 5;
@@ -39,15 +40,31 @@ impl Shape {
     }
 }
 
+/// What the deck lists: a run of tracks that queue together, or shelf items of any kind that
+/// each stand alone.
+enum Rows {
+    Tracks(Rc<Vec<Track>>),
+    Mixed(Rc<Vec<GenreItem>>),
+}
+
+impl Rows {
+    fn len(&self) -> usize {
+        match self {
+            Self::Tracks(tracks) => tracks.len(),
+            Self::Mixed(items) => items.len(),
+        }
+    }
+}
+
+/// A framed deck of list rows in up to three columns, paged with the arrows in its head.
 #[derive(IntoElement)]
 pub(crate) struct Picks {
     id: &'static str,
     title: &'static str,
-    eyebrow: Option<&'static str>,
+    eyebrow: Option<SharedString>,
     vacancy: &'static str,
-    tracks: Rc<Vec<Track>>,
+    rows: Rows,
     playback: Entity<Playback>,
-    active: Option<String>,
     width: Pixels,
     page: usize,
     detailed: bool,
@@ -63,7 +80,6 @@ impl Picks {
         id: &'static str,
         tracks: Rc<Vec<Track>>,
         playback: Entity<Playback>,
-        active: Option<String>,
         width: Pixels,
         page: usize,
     ) -> Self {
@@ -72,9 +88,35 @@ impl Picks {
             title: "",
             eyebrow: None,
             vacancy: "",
-            tracks,
+            rows: Rows::Tracks(tracks),
             playback,
-            active,
+            width,
+            page,
+            detailed: false,
+            loading: false,
+            on_previous: None,
+            on_next: None,
+            on_context_menu: None,
+            on_start: None,
+        }
+    }
+
+    /// A deck of shelf items rather than tracks: each row plays or opens on its own, so
+    /// `on_start` goes unused, and `on_context_menu` still names the row by its place.
+    pub(crate) fn mixed(
+        id: &'static str,
+        items: Rc<Vec<GenreItem>>,
+        playback: Entity<Playback>,
+        width: Pixels,
+        page: usize,
+    ) -> Self {
+        Self {
+            id,
+            title: "",
+            eyebrow: None,
+            vacancy: "",
+            rows: Rows::Mixed(items),
+            playback,
             width,
             page,
             detailed: false,
@@ -91,8 +133,9 @@ impl Picks {
         self
     }
 
-    pub(crate) fn eyebrow(mut self, key: &'static str) -> Self {
-        self.eyebrow = Some(key);
+    /// The small line over the title, already worded: a key looked up at render, or a name.
+    pub(crate) fn eyebrow(mut self, label: impl Into<SharedString>) -> Self {
+        self.eyebrow = Some(label.into());
         self
     }
 
@@ -144,12 +187,12 @@ impl Picks {
 impl RenderOnce for Picks {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
-        let shape = Shape::new(self.width, self.tracks.len());
+        let shape = Shape::new(self.width, self.rows.len());
         let page = self.page.min(shape.pages.saturating_sub(1));
         let start = page * shape.slots();
         let row = snapped(theme.metrics.list_row, window);
-        let tracks = self.tracks;
-        let empty = tracks.is_empty();
+        let rows = self.rows;
+        let empty = rows.len() == 0;
         let barren = empty && !self.loading;
         let id = self.id;
         let on_previous = self.on_previous;
@@ -180,7 +223,7 @@ impl RenderOnce for Picks {
                             .flex()
                             .flex_col()
                             .gap_0p5()
-                            .children(self.eyebrow.map(|key| eyebrow(i18n::lookup(key, None), cx)))
+                            .children(self.eyebrow.map(|label| eyebrow(label, cx)))
                             .child(heading(i18n::lookup(self.title, None), cx)),
                     )
                     .child(
@@ -232,20 +275,34 @@ impl RenderOnce for Picks {
                         this.children((0..shape.columns).map(|column| {
                             column_shell(column, theme.border).children((0..ROWS).map(|slot| {
                                 let place = start + column * ROWS + slot;
-                                match tracks.get(place) {
-                                    None => div().flex_none().h(row).into_any_element(),
-                                    Some(_) => TrackCard::new(
+                                match &rows {
+                                    Rows::Tracks(tracks) if place < tracks.len() => TrackCard::new(
                                         id,
                                         place,
                                         tracks.clone(),
                                         self.playback.clone(),
-                                        self.active.as_deref(),
                                     )
                                     .detailed(self.detailed)
                                     .context(on_context_menu.clone())
                                     .start(on_start.clone())
                                     .render(cx)
                                     .into_any_element(),
+                                    Rows::Mixed(items) if place < items.len() => {
+                                        let context = on_context_menu.clone();
+                                        cards::listed(
+                                            (id, place),
+                                            &items[place],
+                                            &self.playback,
+                                            cx,
+                                        )
+                                        .when_some(context, |card, handler| {
+                                            card.menu(move |event, window, cx| {
+                                                handler(place, event, window, cx)
+                                            })
+                                        })
+                                        .into_any_element()
+                                    }
+                                    _ => div().flex_none().h(row).into_any_element(),
                                 }
                             }))
                         }))

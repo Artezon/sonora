@@ -142,16 +142,12 @@ menu-copy = Copiar
 menu-paste = Colar
 menu-select-all = Selecionar tudo
 menu-remove-from-queue = Remover da fila
-menu-open-playlist = Abrir playlist
-menu-play-playlist = Tocar playlist
 menu-rename-playlist = Renomear playlist
 menu-delete-playlist = Excluir playlist
 menu-add-playlist-to-library = Adicionar à Biblioteca
 menu-remove-playlist-from-library = Remover da Biblioteca
 menu-make-playlist-public = Tornar pública
 menu-make-playlist-private = Tornar privada
-menu-open-album = Abrir álbum
-menu-play-album = Tocar álbum
 menu-play-artist = Tocar artista
 
 # playlist editor
@@ -255,7 +251,7 @@ login-signed-in = Conectado como { $name }
 login-failed-title = Falha no login
 login-problem-region = O Spotify não abrirá uma sessão do país onde você está. Faça login do seu país de origem ou altere o país na sua conta do Spotify.
 login-problem-credentials = Sua sessão salva do Spotify não é mais válida. Faça login novamente para continuar.
-login-problem-network = O Sonora não conseguiu acessar o Spotify. Verifique sua conexão com a internet e tente novamente.
+login-problem-network = O Sonora não conseguiu acessar o serviço de música. Verifique sua conexão com a internet e tente novamente.
 login-problem-cancelled = Você fechou a página do navegador antes de aprovar o login. Recomece para finalizar.
 login-problem-refused = O Spotify recusou o login. Aguarde um momento e tente novamente.
 login-problem-premium = O Sonora usa o Spotify Premium para reproduzir, e esta conta não possui o plano. Faça login com uma conta Premium para continuar.
@@ -285,7 +281,6 @@ login-account-title = Escolha uma conta
 login-account-detail = Esta sessão está conectada a mais de uma conta Google. Escolha qual o Sonora deve usar.
 
 # album and playlist pages
-detail-album = Álbum
 detail-playlist = Playlist
 detail-play-album = Tocar álbum
 detail-play-playlist = Tocar playlist
@@ -293,7 +288,6 @@ detail-play-playlist = Tocar playlist
 # play button
 play-pause = Pausar
 play-resume = Retomar
-play-loading = Carregando…
 play-shuffle = Aleatório
 
 # artist page
@@ -339,8 +333,6 @@ release-meta = { $year } • { $kind }
 
 # home page
 home-quick-picks = Escolhas rápidas
-home-listen-again = Ouvir novamente
-home-quick-picks-eyebrow = Comece por uma música
 home-quick-picks-empty = Curta algumas músicas e elas aparecerão aqui
 
 # search page
@@ -443,6 +435,7 @@ month-11 = Nov
 month-12 = Dez
 
 # settings
+settings-search = Pesquisar nas configurações
 settings-tab-general = Geral
 settings-tab-appearance = Aparência
 settings-tab-playback = Reprodução
@@ -453,7 +446,7 @@ settings-theme-detail = Escolha a paleta de cores do aplicativo
 settings-opacity = Opacidade
 settings-opacity-detail = Ajuste a opacidade do fundo do aplicativo
 settings-opacity-value = { $percent }%
-settings-theme-config = Abrir configuração
+settings-theme-folder = Abrir configuração
 settings-adaptive = Tema adaptável
 settings-adaptive-detail = Tingir a paleta com a capa do álbum em reprodução
 settings-visualizer = Visualizador
@@ -470,8 +463,10 @@ settings-saver = Economia de bateria
 settings-saver-detail = Limitar a taxa de quadros das animações quando o Sonora não está em foco, aplicado a partir da próxima inicialização
 settings-corners = Cantos
 settings-corners-detail = O quão arredondados são as superfícies e os controles
-settings-blur = Desfoque
-settings-blur-detail = Desenhar a janela sobre uma área de trabalho desfocada. Precisa de opacidade abaixo de 100%
+settings-blur = Desfoque da interface
+settings-blur-detail = Aplicar vidro fosco a menus e controles flutuantes
+settings-blur-window = Desfocar a janela
+settings-blur-window-detail = Desenhar a janela sobre uma área de trabalho desfocada. Precisa de opacidade abaixo de 100%
 settings-font = Tamanho da fonte
 settings-font-detail = Tamanho base do texto, tudo o mais escala junto
 settings-font-value = { $size } px

@@ -7,7 +7,7 @@ use music::Track;
 use state::{History, HistoryState, Playback};
 use ui::{
     ActiveTheme as _, Button, Listing as _, Modal, Scrollbar, Scroller, TableDelegate, TableEvent,
-    TableState, clock, table, vacant,
+    TableState, runtime, table, vacant,
 };
 
 use crate::chrome::{Searchable, Toolbar, Tooled};
@@ -56,6 +56,7 @@ impl HistoryView {
                 HistoryTracks(history.clone()),
                 playback.clone(),
                 menu,
+                cx,
             )
             .with_history(history.clone())
             .table(cx.weak_entity());
@@ -120,7 +121,7 @@ impl HistoryView {
         };
         let mut strip = HeroMetaStrip::new().text(t!("count-songs", count = count));
         if !duration.is_zero() {
-            strip = strip.text(clock(duration));
+            strip = strip.text(runtime(duration));
         }
 
         PageHero::new("history-hero", t!("nav-history"))
@@ -155,7 +156,7 @@ impl HistoryView {
             )
             .action(
                 Button::new("apply-clear-history")
-                    .danger()
+                    .destructive()
                     .label(t!("common-delete"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.history.update(cx, |history, cx| history.clear(cx));

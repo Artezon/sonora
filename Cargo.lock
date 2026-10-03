@@ -254,7 +254,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -265,7 +265,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1113,7 +1113,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "gpui_util",
  "indexmap",
@@ -1758,7 +1758,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1801,7 +1801,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1916,7 +1916,7 @@ checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 
 [[package]]
 name = "embed"
-version = "0.37.0"
+version = "0.42.1"
 
 [[package]]
 name = "embed-resource"
@@ -2046,7 +2046,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2373,6 +2373,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "fsevent-sys"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76ee7a02da4d231650c7cea31349b889be2f45ddb3ef3032d2ec8185f6313fd2"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2663,7 +2672,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2734,7 +2743,7 @@ dependencies = [
 [[package]]
 name = "gpui_apple"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "anyhow",
  "block",
@@ -2757,7 +2766,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2803,7 +2812,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2849,7 +2858,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2860,7 +2869,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "gpui",
  "gpui_linux",
@@ -2871,7 +2880,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "schemars",
  "serde",
@@ -2881,7 +2890,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "anyhow",
  "log",
@@ -2891,7 +2900,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2910,6 +2919,7 @@ dependencies = [
  "unicode-bidi",
  "unicode-segmentation",
  "web-sys",
+ "web-time",
  "wgpu",
  "zed-font-kit",
 ]
@@ -2917,7 +2927,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3185,7 +3195,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -3319,7 +3329,7 @@ dependencies = [
 
 [[package]]
 name = "i18n"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "fluent-bundle",
  "gpui",
@@ -3354,7 +3364,7 @@ dependencies = [
 
 [[package]]
 name = "icons"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "anyhow",
  "embed",
@@ -3529,6 +3539,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "inotify"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cc00ea907cab49550b7da656f80ebb97be1b997d931fbcd28d39734e17ce592"
+dependencies = [
+ "bitflags 2.13.1",
+ "inotify-sys",
+ "libc",
+]
+
+[[package]]
+name = "inotify-sys"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c033f80b2c113cdf91ab7a33faa9cbc014726dcad99880c8609af2a370edf37d"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3540,7 +3570,7 @@ dependencies = [
 
 [[package]]
 name = "input"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "gpui",
  "ui",
@@ -3674,10 +3704,12 @@ dependencies = [
  "defmt",
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb-platform",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "windows-link 0.2.1",
 ]
 
 [[package]]
@@ -3699,6 +3731,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "jiff-tzdb"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "142bd39932ad231f10513df9ab62661fead8719872150b7ad02a2df79f4e141e"
+
+[[package]]
+name = "jiff-tzdb-platform"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "875a5a69ac2bab1a891711cf5eccbec1ce0341ea805560dcd90b7a2e925132e8"
+dependencies = [
+ "jiff-tzdb",
 ]
 
 [[package]]
@@ -3837,6 +3884,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "kqueue"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d763e5b24120b4ddf50de6c92308156765aabfbbccebf401da7cff2d70a41ea"
+dependencies = [
+ "kqueue-sys",
+ "libc",
+]
+
+[[package]]
+name = "kqueue-sys"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07293a4e297ac234359b510362495713f75ea345d5307140414f20c69ffeb087"
+dependencies = [
+ "bitflags 2.13.1",
+ "libc",
+]
+
+[[package]]
 name = "ksni"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3955,7 +4022,7 @@ dependencies = [
 [[package]]
 name = "librespot-audio"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=e7eb953d5848fd97bacd00e6c0e33500765eaa63#e7eb953d5848fd97bacd00e6c0e33500765eaa63"
+source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
 dependencies = [
  "aes",
  "bytes",
@@ -3974,7 +4041,7 @@ dependencies = [
 [[package]]
 name = "librespot-core"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=e7eb953d5848fd97bacd00e6c0e33500765eaa63#e7eb953d5848fd97bacd00e6c0e33500765eaa63"
+source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
 dependencies = [
  "aes",
  "base64",
@@ -4030,7 +4097,7 @@ dependencies = [
 [[package]]
 name = "librespot-metadata"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=e7eb953d5848fd97bacd00e6c0e33500765eaa63#e7eb953d5848fd97bacd00e6c0e33500765eaa63"
+source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4047,7 +4114,7 @@ dependencies = [
 [[package]]
 name = "librespot-oauth"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=e7eb953d5848fd97bacd00e6c0e33500765eaa63#e7eb953d5848fd97bacd00e6c0e33500765eaa63"
+source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
 dependencies = [
  "log",
  "oauth2",
@@ -4060,7 +4127,7 @@ dependencies = [
 [[package]]
 name = "librespot-playback"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=e7eb953d5848fd97bacd00e6c0e33500765eaa63#e7eb953d5848fd97bacd00e6c0e33500765eaa63"
+source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
 dependencies = [
  "cpal 0.16.0",
  "form_urlencoded",
@@ -4083,7 +4150,7 @@ dependencies = [
 [[package]]
 name = "librespot-protocol"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=e7eb953d5848fd97bacd00e6c0e33500765eaa63#e7eb953d5848fd97bacd00e6c0e33500765eaa63"
+source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
 dependencies = [
  "protobuf",
  "protobuf-codegen",
@@ -4318,7 +4385,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -4397,6 +4464,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30d65c71f1ce40ab09135ce117d742b9f8a19ff91a41a8b57ed50bc2de59c427"
 dependencies = [
  "libc",
+ "log",
  "wasi",
  "windows-sys 0.61.2",
 ]
@@ -4432,6 +4500,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mpris-server"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70cf358e9a9516cc35ed40eebd56cbe80f5190a7a2b3cd0c2d358c86b879132b"
+dependencies = [
+ "async-channel",
+ "futures-channel",
+ "serde",
+ "trait-variant",
+ "zbus",
+]
+
+[[package]]
 name = "muda"
 version = "0.19.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4447,12 +4528,12 @@ dependencies = [
  "once_cell",
  "png 0.18.1",
  "thiserror 2.0.19",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
 name = "music"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4464,9 +4545,11 @@ dependencies = [
  "deunicode",
  "dirs",
  "env_logger",
+ "fastrand",
  "flate2",
  "futures",
  "http",
+ "jiff",
  "kakasi",
  "librespot-core",
  "librespot-playback",
@@ -4491,6 +4574,8 @@ dependencies = [
  "serde_norway",
  "storage",
  "symphonia",
+ "tempfile",
+ "time",
  "tokio",
  "widevine",
  "ytmusic",
@@ -4598,6 +4683,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
+name = "notify"
+version = "8.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d3d07927151ff8575b7087f245456e549fea62edf0ec4e565a5ee50c8402bc3"
+dependencies = [
+ "bitflags 2.13.1",
+ "fsevent-sys",
+ "inotify",
+ "kqueue",
+ "libc",
+ "log",
+ "mio",
+ "notify-types",
+ "walkdir",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
 name = "notify-rust"
 version = "4.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4609,6 +4712,15 @@ dependencies = [
  "serde",
  "tauri-winrt-notification",
  "zbus",
+]
+
+[[package]]
+name = "notify-types"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42b8cfee0e339a0337359f3c88165702ac6e600dc01c0cc9579a92d62b08477a"
+dependencies = [
+ "bitflags 2.13.1",
 ]
 
 [[package]]
@@ -4626,7 +4738,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5371,7 +5483,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "collections",
  "serde",
@@ -5943,7 +6055,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6248,7 +6360,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "derive_refineable",
 ]
@@ -6466,7 +6578,7 @@ dependencies = [
 
 [[package]]
 name = "router"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "gpui",
  "ui",
@@ -6607,7 +6719,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6620,7 +6732,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6714,7 +6826,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6797,7 +6909,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "async-task",
  "backtrace",
@@ -7272,12 +7384,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
 name = "sonora"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "anyhow",
  "dirs",
@@ -7314,6 +7426,7 @@ dependencies = [
  "windows 0.62.2",
  "windows-sys 0.61.2",
  "winresource",
+ "zbus",
 ]
 
 [[package]]
@@ -7396,7 +7509,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7422,9 +7535,10 @@ dependencies = [
 
 [[package]]
 name = "state"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "anyhow",
+ "ashpd",
  "async-trait",
  "dirs",
  "discord-rich-presence",
@@ -7436,7 +7550,11 @@ dependencies = [
  "image",
  "log",
  "moka",
+ "mpris-server",
  "music",
+ "notify",
+ "objc2-core-foundation",
+ "objc2-io-kit",
  "reqwest 0.13.4",
  "rusqlite",
  "serde",
@@ -7447,6 +7565,7 @@ dependencies = [
  "tokio",
  "ui",
  "webview",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7457,7 +7576,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "anyhow",
  "dirs",
@@ -7516,7 +7635,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "heapless",
  "log",
@@ -7974,7 +8093,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8431,6 +8550,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "trait-variant"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b19a4867a870f6edc4c283f2b455804b1879c0baf0e642f26b03ed8ee262d9d3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "transpose"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8457,7 +8587,7 @@ dependencies = [
  "once_cell",
  "png 0.18.1",
  "thiserror 2.0.19",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -8523,12 +8653,12 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
 name = "ui"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "ashpd",
  "futures",
@@ -8735,7 +8865,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "perf",
  "quote",
@@ -8869,7 +8999,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "views"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "gpui",
  "i18n",
@@ -9159,7 +9289,7 @@ dependencies = [
 
 [[package]]
 name = "webview"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "anyhow",
  "block2 0.6.2",
@@ -9424,17 +9554,19 @@ checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "widevine"
-version = "0.37.0"
+version = "0.42.1"
 dependencies = [
  "anyhow",
  "cc",
  "dirs",
  "flate2",
+ "libc",
  "log",
  "reqwest 0.13.4",
  "serde_json",
  "sha2",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9459,7 +9591,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -9740,6 +9872,15 @@ dependencies = [
 
 [[package]]
 name = "windows-sys"
+version = "0.60.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
+dependencies = [
+ "windows-targets 0.53.5",
+]
+
+[[package]]
+name = "windows-sys"
 version = "0.61.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
@@ -9771,11 +9912,28 @@ dependencies = [
  "windows_aarch64_gnullvm 0.52.6",
  "windows_aarch64_msvc 0.52.6",
  "windows_i686_gnu 0.52.6",
- "windows_i686_gnullvm",
+ "windows_i686_gnullvm 0.52.6",
  "windows_i686_msvc 0.52.6",
  "windows_x86_64_gnu 0.52.6",
  "windows_x86_64_gnullvm 0.52.6",
  "windows_x86_64_msvc 0.52.6",
+]
+
+[[package]]
+name = "windows-targets"
+version = "0.53.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4945f9f551b88e0d65f3db0bc25c33b8acea4d9e41163edf90dcd0b19f9069f3"
+dependencies = [
+ "windows-link 0.2.1",
+ "windows_aarch64_gnullvm 0.53.1",
+ "windows_aarch64_msvc 0.53.1",
+ "windows_i686_gnu 0.53.1",
+ "windows_i686_gnullvm 0.53.1",
+ "windows_i686_msvc 0.53.1",
+ "windows_x86_64_gnu 0.53.1",
+ "windows_x86_64_gnullvm 0.53.1",
+ "windows_x86_64_msvc 0.53.1",
 ]
 
 [[package]]
@@ -9818,6 +9976,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a4622180e7a0ec044bb555404c800bc9fd9ec262ec147edd5989ccd0c02cd3"
 
 [[package]]
+name = "windows_aarch64_gnullvm"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9d8416fa8b42f5c947f8482c43e7d89e73a173cead56d044f6a56104a6d1b53"
+
+[[package]]
 name = "windows_aarch64_msvc"
 version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9828,6 +9992,12 @@ name = "windows_aarch64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09ec2a7bb152e2252b53fa7803150007879548bc709c039df7627cabbd05d469"
+
+[[package]]
+name = "windows_aarch64_msvc"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9d782e804c2f632e395708e99a94275910eb9100b2114651e04744e9b125006"
 
 [[package]]
 name = "windows_i686_gnu"
@@ -9842,10 +10012,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e9b5ad5ab802e97eb8e295ac6720e509ee4c243f69d781394014ebfe8bbfa0b"
 
 [[package]]
+name = "windows_i686_gnu"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "960e6da069d81e09becb0ca57a65220ddff016ff2d6af6a223cf372a506593a3"
+
+[[package]]
 name = "windows_i686_gnullvm"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0eee52d38c090b3caa76c563b86c3a4bd71ef1a819287c19d586d7334ae8ed66"
+
+[[package]]
+name = "windows_i686_gnullvm"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa7359d10048f68ab8b09fa71c3daccfb0e9b559aed648a8f95469c27057180c"
 
 [[package]]
 name = "windows_i686_msvc"
@@ -9860,6 +10042,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "240948bc05c5e7c6dabba28bf89d89ffce3e303022809e73deaefe4f6ec56c66"
 
 [[package]]
+name = "windows_i686_msvc"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e7ac75179f18232fe9c285163565a57ef8d3c89254a30685b57d83a38d326c2"
+
+[[package]]
 name = "windows_x86_64_gnu"
 version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9870,6 +10058,12 @@ name = "windows_x86_64_gnu"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "147a5c80aabfbf0c7d901cb5895d1de30ef2907eb21fbbab29ca94c5b08b1a78"
+
+[[package]]
+name = "windows_x86_64_gnu"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c3842cdd74a865a8066ab39c8a7a473c0778a3f29370b5fd6b4b9aa7df4a499"
 
 [[package]]
 name = "windows_x86_64_gnullvm"
@@ -9884,6 +10078,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24d5b23dc417412679681396f2b49f3de8c1473deb516bd34410872eff51ed0d"
 
 [[package]]
+name = "windows_x86_64_gnullvm"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ffa179e2d07eee8ad8f57493436566c7cc30ac536a3379fdf008f47f6bb7ae1"
+
+[[package]]
 name = "windows_x86_64_msvc"
 version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9894,6 +10094,12 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "windows_x86_64_msvc"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "winnow"
@@ -10113,11 +10319,12 @@ dependencies = [
 [[package]]
 name = "ytmusic"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/ytmusic-rs?rev=e0a5174#e0a5174e20680374c2bfc771449516452b6ee18d"
+source = "git+https://github.com/sonorahq/ytmusic-rs?rev=f213c0b#f213c0b4351d7321514c9bbd96553ce1f73fb1c6"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "bytes",
  "cookie_store",
  "log",
  "rand 0.9.5",
@@ -10390,7 +10597,7 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "anyhow",
  "chrono",
@@ -10407,7 +10614,7 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -10418,7 +10625,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67#770544dfcf70fdcf0b5c6e28edb58e2fa77a7e67"
+source = "git+https://github.com/sonorahq/gpui?rev=5ff26c7dedb1c8e27b69f89be13ce2744484874a#5ff26c7dedb1c8e27b69f89be13ce2744484874a"
 
 [[package]]
 name = "zune-core"

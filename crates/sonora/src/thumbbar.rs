@@ -518,8 +518,9 @@ fn icon(rgba: &[u8], size: u32) -> Option<HICON> {
     }
     unsafe {
         let pixels = std::slice::from_raw_parts_mut(bits.cast::<u8>(), rgba.len());
-        for (out, pixel) in pixels.chunks_exact_mut(4).zip(rgba.chunks_exact(4)) {
-            out.copy_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+        let (pixels, _) = pixels.as_chunks_mut::<4>();
+        for (out, pixel) in pixels.iter_mut().zip(rgba.as_chunks::<4>().0) {
+            *out = [pixel[2], pixel[1], pixel[0], pixel[3]];
         }
     }
 

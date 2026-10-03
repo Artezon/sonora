@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{MediaKind, MusicApi};
+use crate::{MediaKind, MusicApi, escape};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use librespot_core::Session;
@@ -11,8 +11,9 @@ use crate::spotify::{
     albums, artists, collection, collection2, pathfinder, playlists, profiles, radio, search, wire,
 };
 use crate::{
-    Album, AlbumDetail, Artist, ArtistProfile, Genre, GenreDetail, HomeFeed, Playlist,
-    PlaylistDetail, SavedArtist, Track, UserDetail, UserProfile,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Genre, GenreDetail,
+    GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track,
+    UserDetail, UserProfile,
 };
 
 const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
@@ -29,6 +30,21 @@ impl LibrespotClient {
     pub fn session(&self) -> &Session {
         &self.session
     }
+
+    /// The account's own display name, or `None` when the lookup fails. Signing in calls this,
+    /// so a profile Spotify will not hand over must not take the session down with it.
+    async fn display_name(&self, username: &str) -> Option<String> {
+        let body = self
+            .session
+            .spclient()
+            .get_user_profile(&escape::component(username), None, None)
+            .await
+            .inspect_err(|error| log::debug!("profiles: cannot read {username}: {error}"))
+            .ok()?;
+
+        let profile: wire::Named = serde_json::from_slice(&body).ok()?;
+        profile.label().map(str::to_owned)
+    }
 }
 
 #[async_trait]
@@ -44,21 +60,22 @@ impl MusicApi for LibrespotClient {
             MediaKind::Artist => "artist",
             MediaKind::Playlist => "playlist",
         };
-        Some(format!("https://open.spotify.com/{kind}/{id}"))
+        Some(format!(
+            "https://open.spotify.com/{kind}/{}",
+            escape::component(id)
+        ))
     }
 
     async fn profile(&self) -> Result<UserProfile> {
         let username = self.session.username();
-        let body = self
-            .session
-            .spclient()
-            .get_user_profile(&username, None, None)
-            .await?;
-
-        let profile: wire::Named = serde_json::from_slice(&body).unwrap_or_default();
+        let display_name = self
+            .display_name(&username)
+            .await
+            .unwrap_or_else(|| username.clone());
         Ok(UserProfile {
-            display_name: profile.label().unwrap_or(&username).to_owned(),
+            display_name,
             id: username,
+            avatar: None,
         })
     }
 
@@ -68,6 +85,10 @@ impl MusicApi for LibrespotClient {
 
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
         artists::artist(&self.session, artist_id).await
+    }
+
+    async fn artist_catalogue(&self, artist_id: &str, known: &[Track]) -> Result<ArtistCatalogue> {
+        artists::catalogue(&self.session, artist_id, known.to_vec()).await
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
@@ -118,6 +139,28 @@ impl MusicApi for LibrespotClient {
         albums::album_tracks(&self.session, album_id).await
     }
 
+    /// The artist's own releases without the album the page is already showing. Similar
+    /// artists stay out: the internal queries are persisted by hash, so nothing here can
+    /// ask for a relationship the official client never registered.
+    async fn album_catalogue(
+        &self,
+        album_id: &str,
+        artist_id: Option<&str>,
+    ) -> Result<AlbumCatalogue> {
+        let Some(artist_id) = artist_id else {
+            return Ok(AlbumCatalogue::default());
+        };
+        let mut also_like = artists::discography(&self.session, artist_id)
+            .await
+            .with_context(|| format!("cannot load more from artist {artist_id}"))?;
+        also_like.retain(|album| album.id != album_id);
+        also_like.truncate(SUGGESTIONS);
+        Ok(AlbumCatalogue {
+            also_like,
+            similar: Vec::new(),
+        })
+    }
+
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
         let mut detail = playlists::playlist(&self.session, playlist_id).await?;
         let owner = detail.playlist.owner_id.clone();
@@ -139,8 +182,12 @@ impl MusicApi for LibrespotClient {
         playlists::playlist_tracks(&self.session, playlist_id).await
     }
 
-    async fn track_radio(&self, track_id: &str) -> Result<Vec<Track>> {
-        radio::track_radio(&self.session, track_id).await
+    async fn track_radio(
+        &self,
+        track_id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        Ok((radio::track_radio(&self.session, track_id).await?, None))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
@@ -155,16 +202,28 @@ impl MusicApi for LibrespotClient {
         pathfinder::search_playlists(&self.session, query).await
     }
 
+    /// Spotify's own home feed followed by the Made For You shelves it leaves out, such as On
+    /// Repeat and Blends. Either half alone still makes a page, and the call fails only when
+    /// both do.
     async fn home(&self) -> Result<HomeFeed> {
-        let mut sections = pathfinder::genre(&self.session, MADE_FOR_YOU)
-            .await?
-            .sections;
-        playlists::name_blanks(&self.session, &mut sections).await;
+        let (home, made) = tokio::join!(
+            pathfinder::home(&self.session),
+            pathfinder::genre(&self.session, MADE_FOR_YOU),
+        );
+        let mut feed = home.unwrap_or_else(|error| {
+            log::warn!("home: cannot load the Spotify feed: {error:#}");
+            HomeFeed::default()
+        });
+        match made {
+            Ok(made) => appended(&mut feed, made.sections),
+            Err(error) if feed.listen_again.is_empty() && feed.sections.is_empty() => {
+                return Err(error);
+            }
+            Err(error) => log::warn!("home: cannot load Made For You: {error:#}"),
+        }
+        playlists::name_blanks(&self.session, &mut feed.sections).await;
 
-        Ok(HomeFeed {
-            sections,
-            ..HomeFeed::default()
-        })
+        Ok(feed)
     }
 
     async fn genres(&self) -> Result<Vec<Genre>> {
@@ -207,19 +266,12 @@ impl MusicApi for LibrespotClient {
         playlists::remove_track(&self.session, playlist_id, track_id).await
     }
 
-    async fn set_library_item_pinned(
-        &self,
-        uri: &str,
-        pinned: bool,
-    ) -> Result<crate::LibraryPinResult> {
-        pathfinder::set_library_item_pinned(&self.session, uri, pinned).await
+    async fn set_pinned(&self, uri: &str, pinned: bool) -> Result<crate::PinOutcome> {
+        pathfinder::set_pinned(&self.session, uri, pinned).await
     }
 
-    async fn library_items(
-        &self,
-        order: crate::LibraryOrder,
-    ) -> Result<Option<Vec<crate::LibraryItem>>> {
-        pathfinder::library(&self.session, order).await.map(Some)
+    async fn pin_targets(&self) -> Result<Option<Vec<crate::PinTarget>>> {
+        pathfinder::library(&self.session).await.map(Some)
     }
 
     async fn playlists(&self) -> Result<Vec<Playlist>> {
@@ -227,11 +279,7 @@ impl MusicApi for LibrespotClient {
         let mut offset = 0;
         let mut seen = HashSet::new();
         loop {
-            let body = self
-                .session
-                .spclient()
-                .get_rootlist(offset, Some(300))
-                .await?;
+            let body = playlists::rootlist_page(&self.session, offset, 300).await?;
             let rootlist =
                 RootList::parse_from_bytes(&body).context("cannot decode the rootlist protobuf")?;
             let count = rootlist.contents.items.len();
@@ -269,5 +317,44 @@ impl MusicApi for LibrespotClient {
         }
 
         Ok(playlists)
+    }
+}
+
+/// Puts `sections` after the feed's own shelves, leaving out every item a shelf already shows
+/// and every shelf whose title is already on the page or that ends up empty.
+fn appended(feed: &mut HomeFeed, sections: Vec<GenreSection>) {
+    let mut titles: HashSet<String> = feed
+        .sections
+        .iter()
+        .map(|section| section.title.clone())
+        .collect();
+    let mut shown: HashSet<String> = feed
+        .sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .filter_map(shelf_key)
+        .collect();
+    for mut section in sections {
+        if titles.contains(&section.title) {
+            continue;
+        }
+        section
+            .items
+            .retain(|item| shelf_key(item).is_none_or(|key| shown.insert(key)));
+        if !section.items.is_empty() {
+            titles.insert(section.title.clone());
+            feed.sections.push(section);
+        }
+    }
+}
+
+/// What tells two shelf items apart, unique across kinds.
+fn shelf_key(item: &GenreItem) -> Option<String> {
+    match item {
+        GenreItem::Playlist(playlist) => Some(format!("playlist:{}", playlist.id)),
+        GenreItem::Album(album) => Some(format!("album:{}", album.id)),
+        GenreItem::Genre(genre) => Some(format!("genre:{}", genre.id)),
+        GenreItem::Track(track) => track.id.as_ref().map(|id| format!("track:{id}")),
+        GenreItem::Artist(artist) => Some(format!("artist:{}", artist.id)),
     }
 }

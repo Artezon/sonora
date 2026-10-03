@@ -16,8 +16,10 @@ use gpui::{
 };
 use music::{Shape, Track};
 use router::Destination;
-use state::{Detail, History, Library, Origin, Playback, PlaybackState, Shelf, Sonora};
-use ui::{Button, Cell, ColumnSpec, Menu, Pin, ROW_GROUP, Scrollbar, TableSource, TableState};
+use state::{Detail, History, Library, Origin, Playback, Shelf, Sonora};
+use ui::{
+    Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, Scrollbar, TableSource, TableState,
+};
 
 use crate::shared::cells;
 use crate::shared::confirm::{Confirm, Kind};
@@ -31,16 +33,24 @@ pub(crate) use sort::initial;
 
 use sort::hits;
 
-pub(crate) type PlaybackStatus = (Option<String>, PlaybackState);
+/// The current track and its `Playback::control`. A screen keeps the last one and redraws only
+/// when it changes.
+pub(crate) type PlaybackStatus = (Option<String>, Option<bool>);
 
 pub(crate) fn playback_status(playback: &Entity<Playback>, cx: &App) -> PlaybackStatus {
     let playback = playback.read(cx);
     let track = playback.track().and_then(|track| track.id.clone());
-    (track, playback.state().clone())
+    (track, playback.control())
 }
 pub(crate) trait Tracks: 'static {
     fn tracks<'a>(&self, cx: &'a App) -> &'a [Track];
     fn is_loading(&self, cx: &App) -> bool;
+
+    /// The skeleton rows the table draws before the first tracks arrive. A list that
+    /// leaves the default shows nothing while it loads.
+    fn pending(&self, _cx: &App) -> Option<Pending> {
+        None
+    }
 }
 
 pub(crate) fn first_playable(table: &Entity<TableState<TrackSource>>, cx: &App) -> Option<usize> {
@@ -161,7 +171,7 @@ pub(crate) struct TrackSource {
 }
 
 struct Spread {
-    stamp: (usize, String, bool, bool),
+    stamp: usize,
     extent: Option<(f32, f32)>,
 }
 
@@ -188,6 +198,7 @@ impl TrackSource {
         provider: impl Tracks,
         playback: Entity<Playback>,
         playlist_scrollbar: Entity<Scrollbar>,
+        cx: &mut App,
     ) -> Self {
         Self {
             columns,
@@ -199,7 +210,7 @@ impl TrackSource {
             album: None,
             playlist: None,
             history: None,
-            menu: ItemMenu::new(playlist_scrollbar),
+            menu: ItemMenu::new(playlist_scrollbar, cx),
             table: None,
             sieve: TrackSieve::default(),
             spread: RefCell::new(None),
@@ -212,13 +223,12 @@ impl TrackSource {
         changed
     }
 
-    pub(crate) fn extent(&self, query: &str, cx: &App) -> Option<(f32, f32)> {
+    /// The shortest and longest track in the whole list, `None` only when the list is empty.
+    /// The span deliberately ignores the sieve and the search, so narrowing the table can never
+    /// shrink the slider that did the narrowing and leave the user with no way back.
+    pub(crate) fn extent(&self, cx: &App) -> Option<(f32, f32)> {
         let tracks = self.provider.tracks(cx);
-        let open = TrackSieve {
-            duration: None,
-            ..self.sieve
-        };
-        let stamp = (tracks.len(), query.to_owned(), open.explicit, open.playable);
+        let stamp = tracks.len();
         if let Some(spread) = self.spread.borrow().as_ref()
             && spread.stamp == stamp
         {
@@ -228,9 +238,6 @@ impl TrackSource {
         let mut low = f32::MAX;
         let mut high = f32::MIN;
         for track in tracks {
-            if !open.keeps(track) || !hits(track, query) {
-                continue;
-            }
             let seconds = track.duration.as_secs_f32();
             low = low.min(seconds);
             high = high.max(seconds);
@@ -353,7 +360,7 @@ impl TrackSource {
     }
 
     fn index_cell(&self, cell: &Cell<TrackField>, track: &Track, cx: &App) -> AnyElement {
-        let state = self.now_playing(cell.row, cx);
+        let playing = self.now_playing(cell.row, cx);
         let (preload, press) = match track.playable {
             false => (None, None),
             true => {
@@ -371,7 +378,7 @@ impl TrackSource {
                 let whence = self.whence.clone();
                 let row = cell.row;
                 let display = cell.display;
-                let press = cells::toggle(&self.playback, state.clone(), move |playback, cx| {
+                let press = cells::toggle(&self.playback, playing, move |playback, cx| {
                     let from = whence.as_ref().and_then(|whence| whence(cx));
                     match table.as_ref().and_then(|table| table.upgrade()) {
                         Some(table) => playback.start(ordered(&table, cx), display, from, cx),
@@ -384,7 +391,7 @@ impl TrackSource {
 
         let number = self.number(track, cx);
 
-        cells::index(cell, state, track.playable, number, preload, press, cx)
+        cells::index(cell, playing, track.playable, number, preload, press, cx)
     }
 
     fn title_cell(
@@ -451,7 +458,9 @@ impl TrackSource {
         )
     }
 
-    pub(crate) fn now_playing(&self, row: usize, cx: &App) -> Option<PlaybackState> {
+    /// The row's `Playback::control` when it holds the current track. A track listed twice
+    /// counts only at its first row.
+    pub(crate) fn now_playing(&self, row: usize, cx: &App) -> Option<bool> {
         let playback = self.playback.read(cx);
         let current = playback.track()?.id.as_deref()?;
         let tracks = self.provider.tracks(cx);
@@ -462,7 +471,7 @@ impl TrackSource {
             .iter()
             .position(|track| track.id.as_deref() == Some(current))?;
 
-        (sole == row).then(|| playback.state().clone())
+        (sole == row).then(|| playback.control()).flatten()
     }
 
     pub(crate) fn at(&self, row: usize, cx: &App) -> Option<Track> {
@@ -519,24 +528,23 @@ impl TableSource for TrackSource {
         })
     }
 
-    fn filter_axes(&self, query: &str, cx: &App) -> Vec<Filter> {
-        let Some(bounds) = self.extent(query, cx) else {
-            return Vec::new();
-        };
-        let value = self.sieve.duration.unwrap_or(bounds);
-
-        let mut axes = vec![
+    fn filter_axes(&self, cx: &App) -> Vec<Filter> {
+        let duration = self.extent(cx).map(|bounds| {
             Filter::Range(
                 RangeAxis {
                     key: "filter-duration",
                     label: t!("filter-duration"),
                     bounds,
-                    value,
+                    value: self.sieve.duration.unwrap_or(bounds),
                     unit: Unit::Clock,
                     values: None,
                 }
                 .clamped(),
-            ),
+            )
+        });
+
+        let mut axes: Vec<Filter> = duration.into_iter().collect();
+        axes.extend([
             Filter::Flag(FlagAxis {
                 key: "filter-explicit",
                 label: t!("filter-explicit"),
@@ -547,7 +555,7 @@ impl TableSource for TrackSource {
                 label: t!("filter-playable"),
                 on: self.sieve.playable,
             }),
-        ];
+        ]);
         if self.catalog(cx) {
             axes.push(Filter::Flag(FlagAxis {
                 key: "filter-favorites",
@@ -594,6 +602,10 @@ impl TableSource for TrackSource {
 
     fn is_loading(&self, cx: &App) -> bool {
         self.provider.is_loading(cx)
+    }
+
+    fn pending(&self, cx: &App) -> Option<Pending> {
+        self.provider.pending(cx)
     }
 
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {

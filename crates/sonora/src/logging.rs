@@ -1,14 +1,22 @@
 use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
 use env_logger::{Env, Logger, Target};
 use log::{Log, Metadata, Record};
 
-const CONSOLE: &str = "warn,symphonia=error,lofty=error";
-const DISK: &str =
-    "warn,symphonia=error,lofty=error,sonora=debug,ui=debug,music=debug,ytmusic=debug";
+const CONSOLE: &str = "warn,symphonia=error,lofty=error,discord_rich_presence=error";
+const DISK: &str = "warn,symphonia=error,lofty=error,discord_rich_presence=error,sonora=debug,ui=debug,music=debug,ytmusic=debug";
 const FILTER: &str = "SONORA_LOG";
 const PREVIOUS: &str = "sonora.log.1";
-const LIMIT: u64 = 8 * 1024 * 1024;
+const LIMIT: u64 = 16 * 1024 * 1024;
+
+/// Logs to stderr only, for a process that is not the app, such as the Widevine host.
+pub fn console() {
+    env_logger::Builder::from_env(Env::default().default_filter_or(CONSOLE))
+        .format_timestamp(None)
+        .init();
+}
 
 pub fn init() {
     let console = env_logger::Builder::from_env(Env::default().default_filter_or(CONSOLE))
@@ -33,25 +41,59 @@ pub fn init() {
     if log::set_boxed_logger(logger).is_ok() {
         log::set_max_level(level);
     }
+    catch_panics();
 
     log::debug!("logging: sonora {} started", env!("CARGO_PKG_VERSION"));
 }
 
-fn open() -> Option<File> {
-    let path = state::log_file()?;
-    let folder = path.parent()?;
-    fs::create_dir_all(folder).ok()?;
+/// Writes a panic to the log before the default hook prints it. A Sonora started from a
+/// desktop entry or a tray has no terminal to lose it to, so this is the only place a crash
+/// leaves a trace. `RUST_BACKTRACE` still decides whether there is a backtrace to write.
+fn catch_panics() {
+    let default = std::panic::take_hook();
 
-    let outgrown = fs::metadata(&path).is_ok_and(|file| file.len() > LIMIT);
-    if outgrown {
-        let _ = fs::rename(&path, folder.join(PREVIOUS));
+    std::panic::set_hook(Box::new(move |panic| {
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("unnamed");
+        let backtrace = std::backtrace::Backtrace::capture();
+        match backtrace.status() {
+            std::backtrace::BacktraceStatus::Captured => {
+                log::error!("panic: {panic} on the {name} thread\n{backtrace}")
+            }
+            _ => log::error!("panic: {panic} on the {name} thread"),
+        }
+        log::logger().flush();
+        default(panic);
+    }));
+}
+
+/// The log file under the size limit: a write that would carry it past `LIMIT` rotates it
+/// first and lands in a fresh file, so a flood of lines churns through the two files instead
+/// of filling the disk.
+struct Capped {
+    path: PathBuf,
+    file: File,
+    written: u64,
+}
+
+impl Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let overflowing = self.written + buf.len() as u64 > LIMIT;
+        if overflowing && self.written > 0 {
+            rotate(&self.path);
+            if let Some(file) = append(&self.path) {
+                self.file = file;
+                self.written = 0;
+            }
+        }
+        let count = self.file.write(buf)?;
+        self.written += count as u64;
+        Ok(count)
     }
 
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .ok()
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
 }
 
 struct Fan {
@@ -73,4 +115,33 @@ impl Log for Fan {
         self.console.flush();
         self.disk.flush();
     }
+}
+
+fn open() -> Option<Capped> {
+    let path = state::log_file()?;
+    fs::create_dir_all(path.parent()?).ok()?;
+
+    let outgrown = fs::metadata(&path).is_ok_and(|file| file.len() > LIMIT);
+    if outgrown {
+        rotate(&path);
+    }
+
+    let file = append(&path)?;
+    let written = file.metadata().map(|file| file.len()).unwrap_or(0);
+    Some(Capped {
+        path,
+        file,
+        written,
+    })
+}
+
+fn append(path: &Path) -> Option<File> {
+    OpenOptions::new().create(true).append(true).open(path).ok()
+}
+
+/// Moves the file to `PREVIOUS`, dropping what was there, so however much is written the
+/// two files together never exceed twice the limit.
+fn rotate(path: &Path) {
+    let Some(folder) = path.parent() else { return };
+    let _ = fs::rename(path, folder.join(PREVIOUS));
 }
