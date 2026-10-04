@@ -1024,11 +1024,15 @@ impl FullscreenView {
                         window.dispatch_action(Box::new(ToggleFullscreen), cx)
                     }),
             )
+            // The OS button lifts back out of the drop, so it sits exactly where the player
+            // bar's one does and stays put as the view opens and closes.
             .when(show_os_fullscreen_btn, |this| {
                 this.child(
                     Button::new("leave-os-fullscreen")
                         .ghost()
                         .small()
+                        .relative()
+                        .top(px(-LEAVE_DROP))
                         .icon(match window.is_fullscreen() {
                             true => "icons/minimize.svg",
                             false => "icons/maximize.svg",

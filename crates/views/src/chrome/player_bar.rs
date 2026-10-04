@@ -552,7 +552,7 @@ impl Render for PlayerBar {
                                 .gap_1()
                                 .child(self.fullscreen_button(show_os_fullscreen_btn))
                                 .when(show_os_fullscreen_btn, |this| {
-                                    this.child(self.os_fullscreen_button(window).mt_1())
+                                    this.child(self.os_fullscreen_button(window))
                                 }),
                         ),
                 ),
