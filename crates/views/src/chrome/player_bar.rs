@@ -230,11 +230,16 @@ impl PlayerBar {
             .into_any_element()
     }
 
-    fn fullscreen_button(&self) -> Button {
+    /// Opens the fullscreen view. It keeps the maximize glyph until the OS fullscreen button is
+    /// shown, which takes that glyph over and leaves this one a chevron.
+    fn fullscreen_button(&self, os_button: bool) -> Button {
         Button::new("toggle-fullscreen")
             .ghost()
             .small()
-            .icon("icons/chevron-up.svg")
+            .icon(match os_button {
+                true => "icons/chevron-up.svg",
+                false => "icons/maximize.svg",
+            })
             .tooltip_above("player-fullscreen")
             .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleFullscreen), cx))
     }
@@ -507,7 +512,7 @@ impl Render for PlayerBar {
                                 .flex_none()
                                 .items_center()
                                 .gap_1()
-                                .child(self.fullscreen_button())
+                                .child(self.fullscreen_button(show_os_fullscreen_btn))
                                 .when(show_os_fullscreen_btn, |this| {
                                     this.child(self.os_fullscreen_button(window))
                                 }),
@@ -545,7 +550,7 @@ impl Render for PlayerBar {
                                 .flex_none()
                                 .items_center()
                                 .gap_1()
-                                .child(self.fullscreen_button())
+                                .child(self.fullscreen_button(show_os_fullscreen_btn))
                                 .when(show_os_fullscreen_btn, |this| {
                                     this.child(self.os_fullscreen_button(window).mt_1())
                                 }),
