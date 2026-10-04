@@ -7,8 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-- OS fullscreen mode is available on all platforms by pressing F11 key or double-clinking in expanded
-  Now Playing view. A dedicated OS fullscreen button can be enabled in settings as well.
+### Added
+
+- Press F11 or double-click the fullscreen view to make the window fill the whole screen. Turn on
+  Use OS fullscreen in settings to have the fullscreen button do the same.
 
 ## [0.42.1] - 2026-10-02
 

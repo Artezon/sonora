@@ -239,8 +239,6 @@ player-previous = Previous track
 player-next = Next track
 player-fullscreen = Fullscreen
 player-fullscreen-leave = Leave fullscreen
-player-os-fullscreen = Enter OS fullscreen
-player-os-fullscreen-exit = Exit OS fullscreen
 fullscreen-artwork = Artwork
 
 # filters
@@ -518,8 +516,8 @@ settings-visualizer-absolute = Ignore volume
 settings-visualizer-absolute-detail = Draw the spectrum at the track's own level, however loud Sonora plays it
 settings-fullscreen-controls-autohide = Hide fullscreen controls
 settings-fullscreen-controls-autohide-detail = Fade out playback controls when fullscreen is inactive
-settings-show-os-fullscreen-btn = Show system fullscreen button
-settings-show-os-fullscreen-btn-detail = Show a button to toggle OS fullscreen mode in addition to the F11 key
+settings-os-fullscreen = Use OS fullscreen
+settings-os-fullscreen-detail = Make the fullscreen view fill the whole screen, the way F11 does
 settings-icons = Icon pack
 settings-icons-detail = Choose the icon set the interface draws from
 settings-motion = Reduce motion

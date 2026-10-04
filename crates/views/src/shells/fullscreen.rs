@@ -717,10 +717,7 @@ impl FullscreenView {
         let inline = self.panel.is_none();
         let clear = match room.fits(Room::Roomy) {
             true => Pixels::ZERO,
-            false => match self.settings.read(cx).show_os_fullscreen_btn() {
-                true => theme.metrics.control_small * 2. + px(4.),
-                false => theme.metrics.control_small,
-            },
+            false => theme.metrics.control_small,
         };
 
         div()
@@ -997,8 +994,6 @@ impl FullscreenView {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
 
-        let show_os_fullscreen_btn = self.settings.read(cx).show_os_fullscreen_btn();
-
         div()
             .id("leave-fullscreen-hover")
             .absolute()
@@ -1006,8 +1001,8 @@ impl FullscreenView {
             .right_5()
             .h(snapped(theme.metrics.player_bar, window))
             .flex()
-            .items_center()
-            .gap_1()
+            .flex_col()
+            .justify_center()
             .opacity(1. - idle)
             .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
                 this.over_leave = *hovering;
@@ -1018,34 +1013,12 @@ impl FullscreenView {
                     .ghost()
                     .when(frosted, Button::frosted)
                     .small()
-                    .icon("icons/chevron-down.svg")
+                    .icon("icons/minimize.svg")
                     .tooltip_above("player-fullscreen-leave")
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(ToggleFullscreen), cx)
                     }),
             )
-            // The OS button lifts back out of the drop, so it sits exactly where the player
-            // bar's one does and stays put as the view opens and closes.
-            .when(show_os_fullscreen_btn, |this| {
-                this.child(
-                    Button::new("leave-os-fullscreen")
-                        .ghost()
-                        .small()
-                        .relative()
-                        .top(px(-LEAVE_DROP))
-                        .icon(match window.is_fullscreen() {
-                            true => "icons/minimize.svg",
-                            false => "icons/maximize.svg",
-                        })
-                        .tooltip_above(match window.is_fullscreen() {
-                            true => "player-os-fullscreen-exit",
-                            false => "player-os-fullscreen",
-                        })
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(ToggleWindowFullscreen), cx)
-                        }),
-                )
-            })
     }
 }
 
