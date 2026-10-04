@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- AIFF files in a local library now show up and play, including `.aif` and `.aifc`. Opening one
+  from the file manager works too.
+
 ## [0.42.1] - 2026-10-02
 
 ### Added
