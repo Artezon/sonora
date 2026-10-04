@@ -9,8 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- The queue's "From" line and the album page's pause control follows playback when the current
-  track comes from a different album than the one the queue started from.
+- The queue's "From" line and the pause button on album, playlist and artist cards and pins now
+  follow the track that is playing, so an album you queue after another one shows as the source
+  once it starts. When radio takes over, the queue names the song the radio comes from.
 
 ## [0.42.1] - 2026-10-02
 
