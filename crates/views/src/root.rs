@@ -13,10 +13,7 @@ use state::{
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;
-use ui::{
-    ActiveTheme as _, Dismiss, Entrance, Look, Stillness, Theme, ThemeKind, clear_listing,
-    entering, veiled,
-};
+use ui::{ActiveTheme as _, Dismiss, Entrance, Look, Stillness, Theme, ThemeKind, clear_listing};
 
 use crate::chrome::{TitleBar, TitleBarEvent, TitleBarOptions, Toolbar, Tooled};
 use crate::screens::search::SearchView;
@@ -786,12 +783,11 @@ impl Render for Root {
         // The shell enters the way a page enters the workspace. An opaque window fades it
         // under a scrim of the page colour, which leaves the workspace's cached views alone,
         // and a see-through one fades the shell itself. The scrim reaches the bottom corners
-        // of the window, so it rounds them. Fullscreen fades in without the veil. The renderer
-        // drops a backdrop inside a filtered layer, so its frosted controls would show flat
-        // until the veil lifted.
+        // of the window, so it rounds them. Neither shell takes the veil. The renderer drops a
+        // backdrop inside a filtered layer, so fullscreen's frosted controls and the settings
+        // header's haze would show flat until the veil lifted.
         let hidden = self.shell_hidden(window, cx);
         let dissolving = theme.transparent;
-        let veil = matches!(self.view, RootView::Workspace);
         let shell = match self.view {
             RootView::Workspace => self.shells.workspace.clone().into_any_element(),
             RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
@@ -808,12 +804,7 @@ impl Render for Root {
                     .flex_col()
                     .flex_1()
                     .min_h_0()
-                    .when(hidden > 0., |this| match (dissolving, veil) {
-                        (true, true) => entering(this, hidden),
-                        (true, false) => this.opacity(1. - hidden),
-                        (false, true) => veiled(this, hidden),
-                        (false, false) => this,
-                    })
+                    .when(hidden > 0. && dissolving, |this| this.opacity(1. - hidden))
                     .child(shell),
             )
             .when(hidden > 0. && !dissolving, |this| {
