@@ -12,6 +12,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Press F11 or double-click the fullscreen view to make the window fill the whole screen. Turn on
   Use OS fullscreen in settings to have the fullscreen button do the same.
 
+### Fixed
+
+- The queue's "From" line and the pause button on album, playlist and artist cards and pins now
+  follow the track that is playing, so an album you queue after another one shows as the source
+  once it starts. When radio takes over, the queue names the song the radio comes from.
+
 ## [0.42.1] - 2026-10-02
 
 ### Added
