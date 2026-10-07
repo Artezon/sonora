@@ -35,6 +35,10 @@ const UPLOAD_FORMAT: &str = "MP3_MISC";
 /// How many favorites a library page asks for at once.
 const LIBRARY_PAGE: u32 = 2000;
 
+/// How many releases an artist page asks for. Deezer answers this many in one page, and even
+/// Bach comes to fewer than five hundred.
+const DISCOGRAPHY: u32 = 1000;
+
 const PORTRAIT_LIMIT: usize = 24;
 /// How many related artists lend their albums to a thin rail, and how many albums each
 /// lends.
@@ -537,7 +541,7 @@ impl MusicApi for DeezerClient {
         let artist = escape::component(artist_id);
         let detail_path = format!("/artist/{artist}");
         let top_path = format!("/artist/{artist}/top?limit=20");
-        let albums_path = format!("/artist/{artist}/albums?limit=50");
+        let albums_path = format!("/artist/{artist}/albums?limit={DISCOGRAPHY}");
         let (detail, top, albums) = tokio::join!(
             self.public(&detail_path),
             self.public(&top_path),
