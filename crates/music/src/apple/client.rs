@@ -984,6 +984,7 @@ impl AppleClient {
                         })
                         .filter_map(|row| match kind {
                             "playlists" => wire::playlist(row).map(GenreItem::Playlist),
+                            "songs" => wire::song(row).map(GenreItem::Track),
                             _ => wire::album(row).map(GenreItem::Album),
                         })
                         .collect()
