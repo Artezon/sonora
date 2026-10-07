@@ -17,9 +17,9 @@ use tokio::time::Instant;
 use crate::deezer::{decrypt, wire};
 use crate::engine::Loudness;
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, HomeFeed, MediaKind, MusicApi,
-    Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track, UserProfile, distinct_covers,
-    escape,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, ArtistRef, HomeFeed, MediaKind,
+    MusicApi, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track, UserProfile,
+    distinct_covers, escape,
 };
 
 const GATEWAY: &str = "https://www.deezer.com/ajax/gw-light.php";
@@ -544,10 +544,14 @@ impl MusicApi for DeezerClient {
             self.public(&albums_path),
         );
         let detail = detail.context("cannot load the artist")?;
-        Ok(Artist {
+        let own = ArtistRef {
             name: wire::text(&detail, &["name"])
                 .unwrap_or_default()
                 .to_owned(),
+            id: Some(artist_id.to_owned()),
+        };
+        Ok(Artist {
+            name: own.name.clone(),
             cover_large: detail
                 .get("picture_xl")
                 .or_else(|| detail.get("picture_big"))
@@ -564,6 +568,7 @@ impl MusicApi for DeezerClient {
                         .unwrap_or_default()
                         .iter()
                         .filter_map(wire::album)
+                        .map(|album| album.credit(&own))
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -789,10 +794,19 @@ impl MusicApi for DeezerClient {
         let Some(artist_id) = artist_id else {
             return Ok(AlbumCatalogue::default());
         };
-        let (more_by, similar) = tokio::join!(
+        let detail_path = format!("/artist/{}", escape::component(artist_id));
+        let (detail, more_by, similar) = tokio::join!(
+            self.public(&detail_path),
             self.more_from_artist(album_id, artist_id),
             self.similar_artists(artist_id),
         );
+        let own = ArtistRef {
+            name: detail
+                .ok()
+                .and_then(|detail| wire::text(&detail, &["name"]).map(str::to_owned))
+                .unwrap_or_default(),
+            id: Some(artist_id.to_owned()),
+        };
         // Nothing read at all is an error rather than an empty rail, so the catalog does not
         // keep the empty answer for the rest of the session.
         let (more_by, similar) = match (more_by, similar) {
@@ -809,6 +823,7 @@ impl MusicApi for DeezerClient {
         let mut seen = HashSet::new();
         let mut liked: Vec<Album> = more_by
             .into_iter()
+            .map(|album| album.credit(&own))
             .filter(|album| seen.insert(album.id.clone()))
             .collect();
         // One artist at a time, so a thin rail never holds more than one slot of the
@@ -820,12 +835,16 @@ impl MusicApi for DeezerClient {
                 }
                 match self.more_from_artist(album_id, &artist.id).await {
                     Ok(releases) => {
+                        let theirs = ArtistRef {
+                            name: artist.name.clone(),
+                            id: Some(artist.id.clone()),
+                        };
                         for album in releases.into_iter().take(SIMILAR_RELEASES) {
                             if liked.len() >= SUGGESTIONS {
                                 break;
                             }
                             if seen.insert(album.id.clone()) {
-                                liked.push(album);
+                                liked.push(album.credit(&theirs));
                             }
                         }
                     }

@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - YouTube Music artist pages now list the artist's whole discography instead of stopping at ten
   albums and ten singles.
+- Albums on YouTube Music and Deezer artist pages now name the artist, and a card with no
+  artist to show no longer ends its line in a stray dot.
 
 ## [0.42.2] - 2026-10-07
 
