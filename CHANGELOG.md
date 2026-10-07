@@ -21,6 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   once it starts. When radio takes over, the queue names the song the radio comes from.
 - On macOS, the title bar double-click action now follows System Settings instead of always zooming,
   and no longer fires when you double-click a button.
+- YouTube Music tracks no longer skip to the next song at 1:04 when they start before Sonora
+  has its YouTube token ready.
 
 ## [0.42.1] - 2026-10-02
 
