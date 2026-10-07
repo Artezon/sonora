@@ -9,8 +9,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- YouTube Music artist pages now list the artist's whole discography instead of stopping at ten
-  albums and ten singles.
+- YouTube Music and Apple Music artist pages now list the artist's whole discography instead
+  of stopping at ten albums and ten singles, and Deezer artist pages no longer stop at 50.
+- Albums on YouTube Music and Deezer artist pages now name the artist, and a card with no
+  artist to show no longer ends its line in a stray dot.
+- Artist names on Apple Music album cards now open the artist, in search, charts, home, the
+  library and on artist pages.
+- Top songs on Apple Music charts now show and play as songs instead of album cards.
 
 ## [0.42.2] - 2026-10-07
 
