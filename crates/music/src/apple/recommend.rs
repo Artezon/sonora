@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use anyhow::{Context as _, Result};
 
-use crate::apple::client::AppleClient;
+use crate::apple::client::{ALBUM_ARTISTS, AppleClient};
 use crate::apple::wire;
 use crate::escape;
 use crate::{Album, AlbumCatalogue, ArtistCatalogue, SUGGESTIONS, SavedArtist};
@@ -28,7 +28,7 @@ pub(crate) async fn artist_catalogue(
     let answered = client
         .get(
             &client.catalog(&format!("/artists/{}", escape::component(&artist_id))),
-            &[("views", "appears-on-albums")],
+            &[("views", "appears-on-albums"), ALBUM_ARTISTS],
         )
         .await?;
     let found = answered
@@ -53,7 +53,7 @@ async fn related_albums(client: &AppleClient, album_id: &str) -> Result<Vec<Albu
     let answered = client
         .get(
             &client.catalog(&format!("/albums/{}", escape::component(album_id))),
-            &[("views", "related-albums")],
+            &[("views", "related-albums"), ALBUM_ARTISTS],
         )
         .await
         .context("cannot read the related albums")?;
@@ -78,7 +78,10 @@ async fn more_from_artist(
     let answered = client
         .get(
             &client.catalog(&format!("/artists/{}", escape::component(artist_id))),
-            &[("views", "full-albums,singles,similar-artists")],
+            &[
+                ("views", "full-albums,singles,similar-artists"),
+                ALBUM_ARTISTS,
+            ],
         )
         .await
         .context("cannot read more from this artist")?;
@@ -103,7 +106,7 @@ async fn releases_by(client: &AppleClient, album_id: &str, artist_id: &str) -> R
     let answered = client
         .get(
             &client.catalog(&format!("/artists/{}", escape::component(artist_id))),
-            &[("views", "full-albums,singles")],
+            &[("views", "full-albums,singles"), ALBUM_ARTISTS],
         )
         .await
         .with_context(|| format!("cannot read releases by similar artist {artist_id}"))?;

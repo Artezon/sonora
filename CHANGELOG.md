@@ -13,6 +13,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   albums and ten singles.
 - Albums on YouTube Music and Deezer artist pages now name the artist, and a card with no
   artist to show no longer ends its line in a stray dot.
+- Artist names on Apple Music album cards now open the artist, in search, charts, home, the
+  library and on artist pages.
 
 ## [0.42.2] - 2026-10-07
 
