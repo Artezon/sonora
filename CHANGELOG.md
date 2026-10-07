@@ -17,6 +17,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   library and on artist pages.
 - Top songs on Apple Music charts now show and play as songs instead of album cards.
 - The Appears on row of an artist page no longer sits flush against the Show all button.
+- Seeking in the last few seconds of a song now moves within that song, instead of jumping into
+  the next one or doing nothing.
 
 ## [0.42.2] - 2026-10-07
 
