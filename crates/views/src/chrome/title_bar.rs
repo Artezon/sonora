@@ -233,7 +233,7 @@ impl Render for TitleBar {
                 cx.listener(
                     |this, event: &MouseDownEvent, window, _| match event.click_count {
                         1 => this.grabbed = true,
-                        2 if !SYSTEM_ZOOMS => window.zoom_window(),
+                        2 if !SYSTEM_ZOOMS => titlebar_double_click(window),
                         _ => {}
                     },
                 ),
@@ -307,4 +307,13 @@ fn window_controls(leading: bool, traffic_light: bool) -> AnyElement {
         true => TrafficLightControls::new(leading).into_any_element(),
         false => WindowControls::new(leading).into_any_element(),
     }
+}
+
+/// Runs the title bar's double-click action. macOS performs the action set in System Settings;
+/// the window zooms everywhere else, since there is no such preference.
+fn titlebar_double_click(window: &Window) {
+    #[cfg(target_os = "macos")]
+    window.titlebar_double_click();
+    #[cfg(not(target_os = "macos"))]
+    window.zoom_window();
 }

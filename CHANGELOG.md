@@ -19,6 +19,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The queue's "From" line and the pause button on album, playlist and artist cards and pins now
   follow the track that is playing, so an album you queue after another one shows as the source
   once it starts. When radio takes over, the queue names the song the radio comes from.
+- On macOS, the title bar double-click action now follows System Settings instead of always zooming,
+  and no longer fires when you double-click a button.
 
 ## [0.42.1] - 2026-10-02
 
