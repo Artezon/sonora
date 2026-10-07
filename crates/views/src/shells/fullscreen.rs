@@ -4,13 +4,13 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, Bounds, Context, Entity, FocusHandle, FontWeight, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, SpringState, Task, TextShadow,
+    AnyView, App, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
+    ScrollWheelEvent, SharedString, SpringState, Task, TextShadow,
 };
 use gpui::{Window, canvas, deferred, div, phi, px, relative};
 use i18n::t;
-use input::{ToggleFullscreen, WORKSPACE_CONTEXT};
+use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
@@ -359,12 +359,16 @@ impl FullscreenView {
         let album = track.as_ref().and_then(|track| track.album_id.clone());
         let small = track.as_ref().and_then(|track| track.cover.clone());
         let cover_large = self.cover.read(cx).large();
-        // Only upgrade to the cached large art when the track itself has a cover.
-        // Local folders share one album_id; Cover caches the first track's art for the
-        // album. Without this guard, a track with no art would show a sibling's cover
-        // after any track with art was played (issue #833).
+        let local = track
+            .as_ref()
+            .and_then(|track| track.id.as_deref())
+            .is_some_and(music::is_local_id)
+            || small.as_ref().is_some_and(|url| url.starts_with("file://"));
+        // Only upgrade resolution for non-local tracks, since a local cover is always
+        // the full resolution picture. The track's own embedded cover is prioritized
+        // over the cover of its album.
         let large = cover_large
-            .filter(|url| small.is_some() && Some(*url) != small.as_deref())
+            .filter(|url| !local && small.is_some() && Some(*url) != small.as_deref())
             .map(SharedString::from);
 
         if self.large != large {
@@ -372,11 +376,6 @@ impl FullscreenView {
             self.revision += 1;
         }
         let revision = self.revision;
-        let local = track
-            .as_ref()
-            .and_then(|track| track.id.as_deref())
-            .is_some_and(music::is_local_id)
-            || small.as_ref().is_some_and(|url| url.starts_with("file://"));
         let waiting = !local && album.is_some() && cover_large.is_none();
 
         div()
@@ -721,6 +720,7 @@ impl FullscreenView {
         };
 
         div()
+            .id("fullscreen-controls")
             .flex()
             .flex_col()
             .items_center()
@@ -728,6 +728,7 @@ impl FullscreenView {
             .w_full()
             .max_w(px(SEEK_MAX))
             .flex_none()
+            .on_click(|_, _, cx| cx.stop_propagation())
             .when(inline, |this| this.child(self.pill(cx)))
             .child(self.seek(cx))
             .child(
@@ -1011,7 +1012,7 @@ impl FullscreenView {
                     .ghost()
                     .when(frosted, Button::frosted)
                     .small()
-                    .icon("icons/chevron-down.svg")
+                    .icon("icons/minimize.svg")
                     .tooltip_above("player-fullscreen-leave")
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(ToggleFullscreen), cx)
@@ -1132,7 +1133,7 @@ impl Render for FullscreenView {
         let root_bounds = self.root_bounds.clone();
         // The visualizer and its veil sit flush with the window's bottom corners.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let corner = crate::chrome::window_radius(self.settings.read(cx), cx);
+        let corner = crate::chrome::window_radius(self.settings.read(cx), cx, window);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let corner: Option<Pixels> = None;
 
@@ -1149,6 +1150,11 @@ impl Render for FullscreenView {
             .gap_5()
             .px_8()
             .pb_6()
+            .on_click(|event: &ClickEvent, window, cx| {
+                if event.click_count() == 2 {
+                    window.dispatch_action(Box::new(ToggleWindowFullscreen), cx);
+                }
+            })
             .on_mouse_move(cx.listener(Self::hover))
             // Capture phase: every click stirs the idle timer, even one a
             // control underneath swallows for itself.
@@ -1234,6 +1240,7 @@ impl Render for FullscreenView {
                     .when(self.panel.is_some(), |this| {
                         this.child(
                             div()
+                                .id("fullscreen-panel")
                                 .relative()
                                 .flex()
                                 .flex_col()
@@ -1241,6 +1248,7 @@ impl Render for FullscreenView {
                                 .min_w_0()
                                 .min_h_0()
                                 .h_full()
+                                .on_click(|_, _, cx| cx.stop_propagation())
                                 .child(self.aside.clone())
                                 .when(shown, |this| this.child(self.floating(hide, cx))),
                         )

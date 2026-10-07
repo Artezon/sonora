@@ -13,10 +13,7 @@ use state::{
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;
-use ui::{
-    ActiveTheme as _, Dismiss, Entrance, Look, Stillness, Theme, ThemeKind, clear_listing,
-    entering, veiled,
-};
+use ui::{ActiveTheme as _, Dismiss, Entrance, Look, Stillness, Theme, ThemeKind, clear_listing};
 
 use crate::chrome::{TitleBar, TitleBarEvent, TitleBarOptions, Toolbar, Tooled};
 use crate::screens::search::SearchView;
@@ -84,6 +81,11 @@ pub struct Root {
     navigation_transition: Option<Task<()>>,
     /// The entrance the shell plays as the window moves into or out of fullscreen.
     shell_entrance: Option<Entrance>,
+    /// The OS fullscreen move the next render owes the fullscreen view, true as it opens and
+    /// false as it closes.
+    os_follow: Option<bool>,
+    /// Whether the window is in OS fullscreen because opening the fullscreen view put it there.
+    os_entered: bool,
     screens: Screens,
     adaptive: Entity<Adaptive>,
     background: Option<gpui::WindowBackgroundAppearance>,
@@ -282,6 +284,8 @@ impl Root {
             pending: None,
             navigation_transition: None,
             shell_entrance: None,
+            os_follow: None,
+            os_entered: false,
             screens: Screens {
                 home,
                 history,
@@ -434,6 +438,28 @@ impl Root {
         wake.update(cx, |wake, cx| wake.set_fullscreen(fullscreen, cx));
     }
 
+    /// Carries the window into or out of OS fullscreen with the fullscreen view when the setting
+    /// asks for it. Closing the view leaves OS fullscreen only if opening it went there, so a
+    /// window put there with F11 stays.
+    fn follow_os_fullscreen(&mut self, window: &mut Window, cx: &App) {
+        let Some(opening) = self.os_follow.take() else {
+            return;
+        };
+        match opening {
+            true => {
+                if Sonora::global(cx).settings.read(cx).os_fullscreen() && !window.is_fullscreen() {
+                    window.toggle_fullscreen();
+                    self.os_entered = true;
+                }
+            }
+            false => {
+                if std::mem::take(&mut self.os_entered) && window.is_fullscreen() {
+                    window.toggle_fullscreen();
+                }
+            }
+        }
+    }
+
     fn toggle_fullscreen(&mut self, cx: &mut Context<Self>) {
         match self.view {
             RootView::Workspace => navigate(Destination::Fullscreen, cx),
@@ -543,6 +569,10 @@ impl Root {
 
     fn show(&mut self, destination: Destination, cx: &mut Context<Self>) {
         clear_listing(cx);
+        let opening = matches!(destination, Destination::Fullscreen);
+        if opening != matches!(self.view, RootView::Fullscreen) {
+            self.os_follow = Some(opening);
+        }
         // Leaving settings is what clears the note about the last scan, so every move tells it.
         let settings = matches!(destination, Destination::Settings(_));
         Scan::global(cx).update(cx, |scan, cx| scan.viewing_settings(settings, cx));
@@ -728,6 +758,7 @@ impl Render for Root {
                 .update(cx, |fullscreen, cx| fullscreen.focus(window, cx)),
             None => {}
         }
+        self.follow_os_fullscreen(window, cx);
 
         let options = match show_sign_in {
             true => TitleBarOptions {
@@ -752,7 +783,10 @@ impl Render for Root {
         // `Opaque`; Linux/FreeBSD round their own chrome directly instead, below.
         #[cfg(target_os = "windows")]
         {
-            let rounding = Sonora::global(cx).settings.read(cx).window_rounding();
+            let rounding = match window.is_fullscreen() {
+                true => ui::Rounding::Square,
+                false => Sonora::global(cx).settings.read(cx).window_rounding(),
+            };
             if self.rounded != Some(rounding) {
                 self.rounded = Some(rounding);
                 state::apply_window_rounding(window, rounding, cx);
@@ -774,7 +808,7 @@ impl Render for Root {
         // `PlayerBar` for the top and bottom edges. Rounding the root too keeps its own
         // background quad correct and costs nothing.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx);
+        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx, window);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<gpui::Pixels> = None;
 
@@ -786,12 +820,11 @@ impl Render for Root {
         // The shell enters the way a page enters the workspace. An opaque window fades it
         // under a scrim of the page colour, which leaves the workspace's cached views alone,
         // and a see-through one fades the shell itself. The scrim reaches the bottom corners
-        // of the window, so it rounds them. Fullscreen fades in without the veil. The renderer
-        // drops a backdrop inside a filtered layer, so its frosted controls would show flat
-        // until the veil lifted.
+        // of the window, so it rounds them. Neither shell takes the veil. The renderer drops a
+        // backdrop inside a filtered layer, so fullscreen's frosted controls and the settings
+        // header's haze would show flat until the veil lifted.
         let hidden = self.shell_hidden(window, cx);
         let dissolving = theme.transparent;
-        let veil = matches!(self.view, RootView::Workspace);
         let shell = match self.view {
             RootView::Workspace => self.shells.workspace.clone().into_any_element(),
             RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
@@ -808,12 +841,7 @@ impl Render for Root {
                     .flex_col()
                     .flex_1()
                     .min_h_0()
-                    .when(hidden > 0., |this| match (dissolving, veil) {
-                        (true, true) => entering(this, hidden),
-                        (true, false) => this.opacity(1. - hidden),
-                        (false, true) => veiled(this, hidden),
-                        (false, false) => this,
-                    })
+                    .when(hidden > 0. && dissolving, |this| this.opacity(1. - hidden))
                     .child(shell),
             )
             .when(hidden > 0. && !dissolving, |this| {

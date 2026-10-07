@@ -351,6 +351,7 @@ fn open_window(cx: &mut App) {
             inactive_frame_interval: saver.interval(),
             is_movable: true,
             is_resizable: true,
+            app_owns_titlebar_drag: true,
             app_id: Some("sonora".into()),
             window_min_size: Some(LEAST_SIZE),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]

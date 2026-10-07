@@ -7,6 +7,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.42.2] - 2026-10-07
+
+### Added
+
+- Press F11 or double-click the fullscreen view to make the window fill the whole screen. Turn on
+  Use OS fullscreen in settings to have the fullscreen button do the same.
+- AIFF files in a local library now show up and play, including `.aif` and `.aifc`. Opening one
+  from the file manager works too.
+
+### Fixed
+
+- The queue's "From" line and the pause button on album, playlist and artist cards and pins now
+  follow the track that is playing, so an album you queue after another one shows as the source
+  once it starts. When radio takes over, the queue names the song the radio comes from.
+- On macOS, the title bar double-click action now follows System Settings instead of always zooming,
+  and no longer fires when you double-click a button.
+- YouTube Music tracks no longer skip to the next song at 1:04 when they start before Sonora
+  has its YouTube token ready.
+- Fullscreen shows a local song's own embedded cover instead of the cover of another song
+  from the same album.
+
 ## [0.42.1] - 2026-10-02
 
 ### Added
@@ -1984,7 +2005,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.42.1...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.42.2...HEAD
+[0.42.2]: https://github.com/sonorahq/sonora/compare/v0.42.1...v0.42.2
 [0.42.1]: https://github.com/sonorahq/sonora/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/sonorahq/sonora/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/sonorahq/sonora/compare/v0.40.0...v0.41.0
