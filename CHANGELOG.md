@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- YouTube Music artist pages now list the artist's whole discography instead of stopping at ten
+  albums and ten singles.
+
 ## [0.42.2] - 2026-10-07
 
 ### Added
