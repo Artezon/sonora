@@ -11,11 +11,8 @@ use crate::theme::ActiveTheme as _;
 const SYSTEM_ACTS: bool = cfg!(target_os = "windows");
 const BUTTON: Pixels = px(20.);
 const GLYPH: Pixels = px(16.);
-/// Windows draws its caption glyphs at 10px.
 const CAPTION_GLYPH: Pixels = px(10.);
-/// The icon font sits its glyphs slightly high in the line box, so they drop by this to center.
 const CAPTION_NUDGE: Pixels = px(1.);
-/// Segoe Fluent Icons ships with Windows 11; Windows 10 has the same glyphs in Segoe MDL2 Assets.
 const CAPTION_FONT: &str = "Segoe Fluent Icons";
 const CAPTION_FONT_FALLBACK: &str = "Segoe MDL2 Assets";
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -41,7 +38,6 @@ impl Control {
         }
     }
 
-    /// The caption glyph's codepoint in Windows' own icon font, so the buttons match native ones.
     fn caption_glyph(self) -> &'static str {
         match self {
             Self::Minimize => "\u{E921}",
