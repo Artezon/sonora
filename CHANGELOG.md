@@ -18,7 +18,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Opening audio files from a file manager now starts a queue of just those files and plays the
   first one, instead of adding them to what was already playing. The first file starts right away
-  without any delay, and any other files you selected queue up behind it.
+  without any delay, and any other files you selected queue up behind it. You can choose to keep
+  the current queue when opening a file in Settings > Playback.
 
 ### Fixed
 

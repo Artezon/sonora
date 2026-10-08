@@ -852,18 +852,26 @@ impl Playback {
             .update(cx, |queue, cx| queue.append_last_all(tracks, cx));
     }
 
-    /// Opens paths handed in from the OS (a file-association launch or hand-off). Opening files is
-    /// a request to hear them only, so the queue becomes these alone, played from the first in the
-    /// order they were given.
-    pub fn open_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        self.resolve_paths(paths, None, false, None, cx);
-    }
-
-    /// Queues paths that arrived after the first ones of the same open, so if a file manager
-    /// launches Sonora once per selected file, we still get one queue.
-    pub fn queue_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    /// Opens paths handed in from the OS (a file-association launch or hand-off). Files arrive in
+    /// bursts, because some file managers launch Sonora once per selected file. The first batch of
+    /// a burst creates a new queue, unless `keep_queue` is on, when the files join the queue as
+    /// manually added tracks instead. Later batches follow with the `tail` flag - they queue at
+    /// the back of what the first batch set up.
+    pub fn open_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        tail: bool,
+        keep_queue: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let (placement, reshuffle) = match (tail, keep_queue) {
+            (false, false) => (None, false),
+            (false, true) => (Some(QueuePlacement::Next), false),
+            (true, false) => (Some(QueuePlacement::Last), true),
+            (true, true) => (Some(QueuePlacement::End), false),
+        };
         let pending_open = self.pending_open.take();
-        self.resolve_paths(paths, Some(QueuePlacement::Last), true, pending_open, cx);
+        self.resolve_paths(paths, placement, reshuffle, pending_open, cx);
     }
 
     /// Queues paths dropped on the queue at `gap` upcoming tracks in.

@@ -173,8 +173,14 @@ fn main() {
                 let Some(items) = links.recv().await else {
                     break;
                 };
+                let keep = cx.update(|cx| {
+                    Sonora::global(cx)
+                        .settings
+                        .read(cx)
+                        .keep_queue_on_file_open()
+                });
                 // Create the queue from the first arrived file(s).
-                cx.update(|cx| follow(&items, false, cx));
+                cx.update(|cx| follow(&items, false, keep, cx));
                 // Other tracks accumulate before the burst ends, then join the queue.
                 loop {
                     cx.background_executor().timer(OPEN_COALESCE).await;
@@ -189,7 +195,7 @@ fn main() {
                 }
                 if !pending.is_empty() {
                     let remaining = std::mem::take(&mut pending);
-                    cx.update(|cx| follow(&remaining, true, cx));
+                    cx.update(|cx| follow(&remaining, true, keep, cx));
                 }
             }
         })
@@ -200,10 +206,10 @@ fn main() {
 }
 
 /// Acts on one batch of arguments from the OS. When opening files, they may come in a burst of
-/// multiple batches. Files from the first batch start a new queue and the first file is played.
-/// Tracks from the next batches are then added to the end of the queue. When opening a URL,
-/// a page it names is opened.
-fn follow(items: &[String], tail: bool, cx: &mut App) {
+/// multiple batches. Files from the first batch start a new queue (unless the queue is set to be
+/// kept) and the first file is played. Tracks from the next batches are then added to the end of
+/// the queue. When opening a URL, a page it names is opened.
+fn follow(items: &[String], tail: bool, keep_queue: bool, cx: &mut App) {
     show_window(cx);
     let mut destination = None;
     let mut paths: Vec<PathBuf> = Vec::new();
@@ -225,9 +231,8 @@ fn follow(items: &[String], tail: bool, cx: &mut App) {
     }
     if !paths.is_empty() {
         let playback = Sonora::global(cx).playback.clone();
-        playback.update(cx, |playback, cx| match tail {
-            true => playback.queue_paths(paths, cx),
-            false => playback.open_paths(paths, cx),
+        playback.update(cx, |playback, cx| {
+            playback.open_paths(paths, tail, keep_queue, cx)
         });
     }
 }

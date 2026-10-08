@@ -165,6 +165,7 @@ enum Slot {
     Sleep,
     StayAwake,
     FullscreenOnFileOpen,
+    KeepQueueOnFileOpen,
     Widevine,
     Equalizer,
     EqualizerPreset,
@@ -609,6 +610,7 @@ impl SettingsView {
                     Slot::Sleep,
                     Slot::StayAwake,
                     Slot::FullscreenOnFileOpen,
+                    Slot::KeepQueueOnFileOpen,
                 ];
                 if self.drm.read(cx).shown(cx) {
                     slots.push(Slot::Widevine);
@@ -764,6 +766,10 @@ impl SettingsView {
             Slot::FullscreenOnFileOpen => (
                 t!("settings-fullscreen-on-file-open"),
                 t!("settings-fullscreen-on-file-open-detail"),
+            ),
+            Slot::KeepQueueOnFileOpen => (
+                t!("settings-keep-queue-on-file-open"),
+                t!("settings-keep-queue-on-file-open-detail"),
             ),
             Slot::Widevine => {
                 let (detail, _) = widevine_copy(self.drm.read(cx).state());
@@ -976,6 +982,7 @@ impl SettingsView {
             Slot::Sleep => self.sleep_row(cx).element,
             Slot::StayAwake => self.stay_awake_row(cx).element,
             Slot::FullscreenOnFileOpen => self.fullscreen_on_file_open_row(cx).element,
+            Slot::KeepQueueOnFileOpen => self.keep_queue_on_file_open_row(cx).element,
             Slot::Widevine => self.widevine_row(cx).element,
             Slot::Equalizer => self.equalizer_row(cx).element,
             Slot::EqualizerPreset => self.equalizer_preset_row(cx).element,
@@ -2251,6 +2258,27 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings.update(cx, |settings, cx| {
                         settings.set_fullscreen_on_file_open(!on, cx)
+                    });
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn keep_queue_on_file_open_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).keep_queue_on_file_open();
+
+        self.row(
+            t!("settings-keep-queue-on-file-open"),
+            t!("settings-keep-queue-on-file-open-detail"),
+            muted,
+            small,
+            Switch::new("keep-queue-on-file-open", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_keep_queue_on_file_open(!on, cx)
                     });
                 }))
                 .into_any_element(),
