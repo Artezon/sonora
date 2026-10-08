@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- On Windows, the minimize, maximize, restore and close buttons now use Windows' own icons, so
+  they match other Windows apps.
+
 ### Fixed
 
 - YouTube Music and Apple Music artist pages now list the artist's whole discography instead
