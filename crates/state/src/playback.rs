@@ -880,23 +880,28 @@ impl Playback {
     /// Opens paths handed in from the OS (a file-association launch or hand-off). Files arrive in
     /// bursts, because some file managers launch Sonora once per selected file. The first batch of
     /// a burst creates a new queue, unless `keep_queue` is on, when the files join the queue as
-    /// manually added tracks instead. Later batches follow with the `tail` flag - they queue at
-    /// the back of what the first batch set up.
+    /// manually added tracks instead. Later batches follow with the `tail` flag and already added
+    /// tracks count as `gap` - they queue at the back of what the first batch set up.
     pub fn open_paths(
         &mut self,
         paths: Vec<PathBuf>,
         tail: bool,
         keep_queue: bool,
+        gap: Option<usize>,
         cx: &mut Context<Self>,
     ) {
-        let (placement, reshuffle) = match (tail, keep_queue) {
-            (false, false) => (None, false),
-            (false, true) => (Some(QueuePlacement::Next), false),
-            (true, false) => (Some(QueuePlacement::Last), true),
-            (true, true) => (Some(QueuePlacement::End), false),
+        let (placement, reshuffle, play_next) = match (tail, keep_queue) {
+            (false, false) => (None, false, false),
+            (false, true) => (Some(QueuePlacement::Next), false, true),
+            (true, false) => (Some(QueuePlacement::Last), true, false),
+            (true, true) => (
+                Some(QueuePlacement::Gap(gap.unwrap_or_default())),
+                false,
+                false,
+            ),
         };
         let pending_open = self.pending_open.take();
-        self.resolve_paths(paths, placement, reshuffle, pending_open, cx);
+        self.resolve_paths(paths, placement, reshuffle, play_next, pending_open, cx);
     }
 
     /// Queues paths dropped on the queue at `gap` upcoming tracks in.
@@ -905,6 +910,7 @@ impl Playback {
         self.resolve_paths(
             paths,
             Some(QueuePlacement::Gap(gap)),
+            false,
             false,
             pending_open,
             cx,
@@ -919,6 +925,7 @@ impl Playback {
         paths: Vec<PathBuf>,
         placement: Option<QueuePlacement>,
         reshuffle: bool,
+        play_next: bool,
         pending_open: Option<Task<()>>,
         cx: &mut Context<Self>,
     ) {
@@ -944,7 +951,13 @@ impl Playback {
             this.update(cx, |this, cx| match loaded {
                 Ok(tracks) if tracks.is_empty() => {}
                 Ok(tracks) => match placement {
-                    Some(QueuePlacement::Next) => this.play_next_all(tracks, Some(origin), cx),
+                    Some(QueuePlacement::Next) => {
+                        let playable = tracks.iter().any(|track| track.playable);
+                        this.play_next_all(tracks, Some(origin), cx);
+                        if play_next && playable {
+                            this.next(cx);
+                        }
+                    }
                     Some(QueuePlacement::End) => this.enqueue_all(tracks, Some(origin), cx),
                     Some(QueuePlacement::Last) => {
                         this.play_last_all(tracks, Some(origin), cx);
