@@ -142,6 +142,16 @@ impl ArtistView {
             TableState::new(delegate, cx).follow(scroll)
         });
 
+        cx.subscribe(&detail, |_, _, event, cx| {
+            let state::ArtistDetailEvent::Gone(id) = event;
+            if router::trail(cx).read(cx).current()
+                == router::Destination::Artist(id.clone().into())
+            {
+                router::replace(router::Destination::Local(router::LibraryTab::Artists), cx);
+            }
+        })
+        .detach();
+
         cx.observe(&detail, |this, detail, cx| {
             let artist_id = detail.read(cx).id().map(str::to_owned);
             if this.artist_id != artist_id {
@@ -738,6 +748,7 @@ impl ArtistView {
         }]
         .into_iter()
         .flatten()
+        .map(|rail| div().pt_6().child(rail).into_any_element())
         .collect()
     }
 

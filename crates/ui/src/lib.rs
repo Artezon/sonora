@@ -80,12 +80,12 @@ pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState};
 pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, tucked};
 pub use modal::Modal;
 pub use motion::{
-    Fading, Motion, Motioned, Pace, Rising, Saver, Springs, Stillness, ease_in_out_cubic,
+    Entrance, Fading, Motion, Motioned, Pace, Rising, Saver, Springs, Stillness, ease_in_out_cubic,
     ease_in_out_expo, ease_out_cubic, ease_out_expo, ease_out_quad, entering, entrance_span, mix,
     veiled,
 };
 pub use notice::Notice;
-pub use palette::{CoverPalette, decode, palette, tint};
+pub use palette::{CoverPalette, palette, tint};
 pub use panel::{Panel, Side};
 pub use picker::Picker;
 pub use pin::{DraggedPin, Pin, PinKind, Pinnable, Spot};

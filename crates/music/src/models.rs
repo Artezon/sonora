@@ -154,6 +154,18 @@ pub struct Album {
     pub added_at: Option<i64>,
 }
 
+impl Album {
+    /// Credits the album to `artist` when it names no one. A provider calls this on releases
+    /// read from an artist's own listing, which often leaves the artist out of each entry.
+    pub fn credit(mut self, artist: &ArtistRef) -> Self {
+        if self.artists.is_empty() && self.artist_refs.is_empty() && !artist.name.is_empty() {
+            self.artists = artist.name.clone();
+            self.artist_refs = vec![artist.clone()];
+        }
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AlbumDetail {
     pub album: Album,
@@ -219,7 +231,8 @@ pub struct GenreDetail {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrackTags {
     pub title: String,
-    pub artist: String,
+    /// The track's artists, one name each, in the order the file credits them.
+    pub artists: Vec<String>,
     pub album: String,
     pub album_artist: String,
     pub track_number: String,
